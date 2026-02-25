@@ -19,6 +19,7 @@ services:
       - USER_SERVICE_URL=http://user-service:3001
       - POST_SERVICE_URL=http://post-service:3002
       - JOB_SERVICE_URL=http://job-service:3003
+      - AUTH_SERVICE_URL=http://auth-service:3004
 
   # 3. User Service
   user-service:
@@ -37,3 +38,9 @@ services:
     build: ./services/job-service
     environment:
       - PORT=3003
+
+  # 6. Auth Service
+  auth-service:
+    build: ./services/auth-service
+    environment:
+      - PORT=3004

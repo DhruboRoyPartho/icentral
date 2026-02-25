@@ -1,0 +1,23 @@
+{
+  "name": "auth-service",
+  "version": "1.0.0",
+  "description": "Authentication service",
+  "keywords": [
+    "auth-service"
+  ],
+  "license": "ISC",
+  "author": "Dhrubo Roy Partho, Sadnan",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.97.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3"
+  }
+}

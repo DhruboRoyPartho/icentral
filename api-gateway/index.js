@@ -22,6 +22,11 @@ app.use('/jobs', createProxyMiddleware({
     changeOrigin: true 
 }));
 
+app.use('/auth', createProxyMiddleware({ 
+    target: process.env.AUTH_SERVICE_URL || 'http://auth-service:3004', 
+    changeOrigin: true 
+}));
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`🚀 API Gateway is running on port ${PORT}`);

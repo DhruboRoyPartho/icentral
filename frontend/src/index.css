@@ -1,4 +1,172 @@
+/* frontend/src/index.css */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 :root {
+  --primary: #4f46e5;      /* Modern Indigo */
+  --primary-hover: #4338ca;
+  --bg-color: #f9fafb;     /* Very soft gray background */
+  --surface: #ffffff;      /* White cards */
+  --text-main: #111827;    /* Dark gray text */
+  --text-muted: #6b7280;   /* Light gray text */
+  --border: #e5e7eb;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- Layout Utilities --- */
+.auth-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.card {
+  background: var(--surface);
+  padding: 40px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  width: 100%;
+  max-width: 450px;
+}
+
+/* --- Typography --- */
+h2 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text-main);
+  text-align: center;
+}
+
+.subtitle {
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 24px;
+  font-size: 0.95rem;
+}
+
+/* --- Forms & Inputs --- */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+input, select {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-family: inherit;
+  transition: all 0.2s ease;
+  background-color: #fdfdfd;
+}
+
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+
+/* --- Buttons --- */
+.btn-primary {
+  width: 100%;
+  padding: 12px;
+  background-color: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+}
+
+.btn-danger {
+  background-color: var(--danger);
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-danger:hover {
+  background-color: var(--danger-hover);
+}
+
+/* --- Links --- */
+.auth-link {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.auth-link a {
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.auth-link a:hover {
+  text-decoration: underline;
+}
+
+/* --- Dashboard Layout --- */
+.dashboard-nav {
+  background: var(--surface);
+  padding: 16px 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  margin-bottom: 40px;
+}
+
+.dashboard-nav h1 {
+  font-size: 1.5rem;
+  color: var(--primary);
+}
+
+.dashboard-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+
+
+
+
+/* :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -65,4 +233,4 @@ button:focus-visible {
   button {
     background-color: #f9f9f9;
   }
-}
+} */
