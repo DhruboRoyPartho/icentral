@@ -1,0 +1,22 @@
+{
+  "name": "api-gateway",
+  "version": "1.0.0",
+  "description": "This is a gateway of this project.",
+  "keywords": [
+    "api-gateway"
+  ],
+  "license": "ISC",
+  "author": "Dhrubo Roy Partho, Sadnan",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "http-proxy": "^1.18.1",
+    "http-proxy-middleware": "^3.0.5"
+  }
+}

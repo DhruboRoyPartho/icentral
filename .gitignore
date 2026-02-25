@@ -1,0 +1,7 @@
+# /icentral/.gitignore
+node_modules/
+.env
+dist/
+build/
+.DS_Store
+package-*.json

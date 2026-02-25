@@ -1,0 +1,18 @@
+{
+  "name": "user-service",
+  "version": "1.0.0",
+  "description": "User service",
+  "keywords": [
+    "user-service"
+  ],
+  "license": "ISC",
+  "author": "Dhrubo Roy Partho, Sadnan",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
