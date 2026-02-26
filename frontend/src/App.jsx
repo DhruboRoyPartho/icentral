@@ -1,99 +1,96 @@
-// frontend/src/App.jsx
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import './App.css';
+import AppShell from './components/layout/AppShell';
+import RequireModerator from './components/routing/RequireModerator';
 import Login from './components/Login';
 import Signup from './components/Signup';
-import Dashboard from './components/Dashboard';
+import HomeFeedPage from './pages/HomeFeedPage';
+import SectionPlaceholderPage from './pages/SectionPlaceholderPage';
 
 function App() {
   return (
     <Router>
       <Routes>
-        {/* Default route redirects to login */}
-        <Route path="/" element={<Navigate to="/login" />} />
-        
-        {/* Public Routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
-        
-        {/* Protected Route */}
-        <Route path="/dashboard" element={<Dashboard />} />
+
+        <Route element={<AppShell />}>
+          <Route path="/" element={<Navigate to="/home" replace />} />
+          <Route path="/home" element={<HomeFeedPage />} />
+          <Route
+            path="/job-portal"
+            element={
+              <SectionPlaceholderPage
+                title="Job Portal"
+                subtitle="This page will focus on job-related feed experiences and job-tag filtering. For now, the routing and layout are ready."
+                notes={[
+                  { title: 'Planned behavior', body: 'Show job-tag posts only and add job-specific filters (deadline, company, type).' },
+                  { title: 'Data source', body: 'Will read from post-service feed with job-oriented filters and later job-service details.' },
+                ]}
+              />
+            }
+          />
+          <Route
+            path="/events"
+            element={
+              <SectionPlaceholderPage
+                title="Events"
+                subtitle="This section will display event posts and event recaps in a dedicated feed view."
+                notes={[
+                  { title: 'Planned behavior', body: 'Event-tag and EVENT/EVENT_RECAP posts with RSVP-focused cards later.' },
+                  { title: 'Collaboration link', body: 'Collaborate posts related to events will also surface here as requested.' },
+                ]}
+              />
+            }
+          />
+          <Route
+            path="/collaborate"
+            element={
+              <SectionPlaceholderPage
+                title="Collaborate"
+                subtitle="This section is prepared for collaboration/event invitation posts. We will build the posting workflow next."
+                notes={[
+                  { title: 'Post type page', body: 'Users will create collaboration invitations tied to event/research/community activities.' },
+                  { title: 'Cross-surface visibility', body: 'These collaboration posts will also appear in the Events section.' },
+                ]}
+              />
+            }
+          />
+          <Route
+            path="/moderation"
+            element={
+              <RequireModerator>
+                <SectionPlaceholderPage
+                  title="Moderation"
+                  subtitle="Moderator-only control center for reviewing content, reports, and audit actions."
+                  notes={[
+                    { title: 'Access policy', body: 'Only Admin and Faculty users can access this route.' },
+                    { title: 'Planned tools', body: 'Review queues, pin controls, archive actions, and audit visibility.' },
+                  ]}
+                />
+              </RequireModerator>
+            }
+          />
+          <Route
+            path="/newsletter"
+            element={
+              <SectionPlaceholderPage
+                title="Newsletter"
+                subtitle="Newsletter curation and export workflows will live here. The shell and navigation are ready."
+                notes={[
+                  { title: 'Planned flow', body: 'Curate posts from the feed into newsletter collections and export formatted output.' },
+                  { title: 'Integration', body: 'Will pull selected feed items and later support approval/export tracking.' },
+                ]}
+              />
+            }
+          />
+          <Route path="/dashboard" element={<Navigate to="/home" replace />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
     </Router>
   );
 }
 
 export default App;
-
-
-
-
-
-
-
-
-
-// // import { useState } from 'react'
-// // import reactLogo from './assets/react.svg'
-// // import viteLogo from '/vite.svg'
-// // import './App.css'
-
-// // function App() {
-// //   const [count, setCount] = useState(0)
-
-// //   return (
-// //     <>
-// //       <div>
-// //         <a href="https://vite.dev" target="_blank">
-// //           <img src={viteLogo} className="logo" alt="Vite logo" />
-// //         </a>
-// //         <a href="https://react.dev" target="_blank">
-// //           <img src={reactLogo} className="logo react" alt="React logo" />
-// //         </a>
-// //       </div>
-// //       <h1>Vite + React</h1>
-// //       <div className="card">
-// //         <button onClick={() => setCount((count) => count + 1)}>
-// //           count is {count}
-// //         </button>
-// //         <p>
-// //           Edit <code>src/App.jsx</code> and save to test HMR
-// //         </p>
-// //       </div>
-// //       <p className="read-the-docs">
-// //         Click on the Vite and React logos to learn more
-// //       </p>
-// //     </>
-// //   )
-// // }
-
-// // export default App
-
-
-
-
-// // /frontend/src/App.jsx
-// import { useEffect, useState } from 'react';
-
-// function App() {
-//   const [postData, setPostData] = useState(null);
-
-//   useEffect(() => {
-//     // We call the API Gateway (port 5000), NOT the Post Service directly!
-//     fetch('http://localhost:5000/posts')
-//       .then(response => response.json())
-//       .then(data => setPostData(data.message))
-//       .catch(err => console.error("Error fetching data:", err));
-//   }, []);
-
-//   return (
-//     <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-//       <h1>Department Portal</h1>
-//       <div style={{ padding: '1rem', backgroundColor: '#f0f0f0', borderRadius: '8px' }}>
-//         <h3>Microservice Response:</h3>
-//         <p>{postData ? postData : "Loading connection..."}</p>
-//       </div>
-//     </div>
-//   );
-// }
-
-// export default App;

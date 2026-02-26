@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
 export default function Signup() {
     const navigate = useNavigate();
     const [formData, setFormData] = useState({
@@ -12,14 +14,17 @@ export default function Signup() {
     const handleSignup = async (e) => {
         e.preventDefault();
         try {
-            const response = await fetch('http://localhost:5000/auth/signup', {
+            const response = await fetch(`${API_BASE_URL}/auth/signup`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(formData)
             });
-            const data = await response.json();
+            const contentType = response.headers.get('content-type') || '';
+            const data = contentType.includes('application/json')
+                ? await response.json()
+                : { success: false, message: await response.text() };
             
-            if (data.success) {
+            if (response.ok && data.success) {
                 alert('Registration successful! Please login.');
                 navigate('/login');
             } else {
@@ -27,36 +32,131 @@ export default function Signup() {
             }
         } catch (error) {
             console.error(error);
-            alert('Server error');
+            alert(`Cannot reach API (${API_BASE_URL}). Make sure the API gateway is running on port 5000.`);
         }
     };
 
     return (
-        <div className="auth-container">
-            <div className="card">
-                <h2>Create Account</h2>
-                <p className="subtitle">Join the ICEntral Department Portal</p>
-                
-                <form onSubmit={handleSignup}>
-                    <div className="form-group">
-                        <input name="university_id" placeholder="University ID Number" onChange={handleChange} required />
-                        <input name="full_name" placeholder="Full Name" onChange={handleChange} required />
-                        <input name="session" placeholder="Academic Session (e.g., 2020-2021)" onChange={handleChange} />
-                        <input name="email" type="email" placeholder="Email Address" onChange={handleChange} required />
-                        <input name="phone_number" placeholder="Phone Number" onChange={handleChange} />
-                        <select name="role" onChange={handleChange}>
-                            <option value="student">Student</option>
-                            <option value="alumni">Alumni</option>
-                            <option value="faculty">Faculty</option>
-                        </select>
-                        <input name="password" type="password" placeholder="Secure Password" onChange={handleChange} required />
+        <div className="auth-shell">
+            <div className="auth-stage auth-stage-signup">
+                <section className="panel auth-brand-panel">
+                    <div className="auth-brand-mark" aria-hidden="true">IC</div>
+                    <div className="auth-brand-copy">
+                        <p className="eyebrow">Join The Network</p>
+                        <h1>Create Your ICEntral Account</h1>
+                        <p>
+                            Register once to post, track campus updates, and collaborate with students, alumni, and faculty.
+                        </p>
                     </div>
-                    <button type="submit" className="btn-primary">Sign Up</button>
-                </form>
-                
-                <p className="auth-link">
-                    Already have an account? <Link to="/login">Sign in here</Link>
-                </p>
+
+                    <div className="auth-metric-grid" aria-label="Platform benefits">
+                        <div className="stat-tile">
+                            <span>Feed</span>
+                            <strong>Unified</strong>
+                        </div>
+                        <div className="stat-tile">
+                            <span>Access</span>
+                            <strong>Role-based</strong>
+                        </div>
+                        <div className="stat-tile">
+                            <span>Sections</span>
+                            <strong>6 routes</strong>
+                        </div>
+                        <div className="stat-tile">
+                            <span>Mode</span>
+                            <strong>Community-first</strong>
+                        </div>
+                    </div>
+                </section>
+
+                <section className="panel auth-form-panel auth-form-panel-wide" aria-labelledby="signup-title">
+                    <div className="panel-header auth-panel-header">
+                        <div>
+                            <p className="eyebrow">Registration</p>
+                            <h2 id="signup-title">Create Account</h2>
+                        </div>
+                        <span className="pill pill-ghost">New member</span>
+                    </div>
+
+                    <p className="subtitle auth-subtitle">Join the ICEntral department portal.</p>
+
+                    <form onSubmit={handleSignup} className="stacked-form auth-form">
+                        <div className="field-row two-col">
+                            <label>
+                                <span>University ID</span>
+                                <input
+                                    name="university_id"
+                                    placeholder="e.g., 202012345"
+                                    onChange={handleChange}
+                                    required
+                                />
+                            </label>
+                            <label>
+                                <span>Role</span>
+                                <select name="role" onChange={handleChange} defaultValue="student">
+                                    <option value="student">Student</option>
+                                    <option value="alumni">Alumni</option>
+                                    <option value="faculty">Faculty</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <label>
+                            <span>Full Name</span>
+                            <input name="full_name" placeholder="Your full name" autoComplete="name" onChange={handleChange} required />
+                        </label>
+
+                        <div className="field-row two-col">
+                            <label>
+                                <span>Academic Session</span>
+                                <input
+                                    name="session"
+                                    placeholder="e.g., 2020-2021"
+                                    onChange={handleChange}
+                                />
+                            </label>
+                            <label>
+                                <span>Phone Number</span>
+                                <input
+                                    name="phone_number"
+                                    placeholder="+8801XXXXXXXXX"
+                                    autoComplete="tel"
+                                    onChange={handleChange}
+                                />
+                            </label>
+                        </div>
+
+                        <label>
+                            <span>Email Address</span>
+                            <input
+                                name="email"
+                                type="email"
+                                placeholder="you@university.edu"
+                                autoComplete="email"
+                                onChange={handleChange}
+                                required
+                            />
+                        </label>
+
+                        <label>
+                            <span>Password</span>
+                            <input
+                                name="password"
+                                type="password"
+                                placeholder="Create a secure password"
+                                autoComplete="new-password"
+                                onChange={handleChange}
+                                required
+                            />
+                        </label>
+
+                        <button type="submit" className="btn btn-accent auth-submit-btn">Create Account</button>
+                    </form>
+
+                    <p className="auth-link auth-link-themed">
+                        Already have an account? <Link to="/login">Sign in</Link>
+                    </p>
+                </section>
             </div>
         </div>
     );
