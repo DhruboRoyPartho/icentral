@@ -962,6 +962,11 @@
   color: var(--muted);
 }
 
+.moderation-page {
+  display: grid;
+  gap: 14px;
+}
+
 .placeholder-panel {
   display: grid;
   gap: 14px;

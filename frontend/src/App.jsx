@@ -5,6 +5,7 @@ import RequireModerator from './components/routing/RequireModerator';
 import Login from './components/Login';
 import Signup from './components/Signup';
 import HomeFeedPage from './pages/HomeFeedPage';
+import ModerationPage from './pages/ModerationPage';
 import SectionPlaceholderPage from './pages/SectionPlaceholderPage';
 
 function App() {
@@ -60,14 +61,7 @@ function App() {
             path="/moderation"
             element={
               <RequireModerator>
-                <SectionPlaceholderPage
-                  title="Moderation"
-                  subtitle="Moderator-only control center for reviewing content, reports, and audit actions."
-                  notes={[
-                    { title: 'Access policy', body: 'Only Admin and Faculty users can access this route.' },
-                    { title: 'Planned tools', body: 'Review queues, pin controls, archive actions, and audit visibility.' },
-                  ]}
-                />
+                <ModerationPage />
               </RequireModerator>
             }
           />

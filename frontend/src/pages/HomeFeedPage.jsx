@@ -79,15 +79,11 @@ export default function HomeFeedPage() {
   const { isAuthenticated, isModerator, user } = useAuth();
   const [feedItems, setFeedItems] = useState([]);
   const [tags, setTags] = useState([]);
-  const [feedMeta, setFeedMeta] = useState({ total: 0, archivedDuringRequest: 0 });
   const [postForm, setPostForm] = useState(initialPostForm);
-  const [tagName, setTagName] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [filters, setFilters] = useState(initialFilters);
   const [loadingFeed, setLoadingFeed] = useState(true);
-  const [loadingTags, setLoadingTags] = useState(true);
   const [submittingPost, setSubmittingPost] = useState(false);
-  const [submittingTag, setSubmittingTag] = useState(false);
   const [actionBusyPostId, setActionBusyPostId] = useState(null);
   const [banner, setBanner] = useState({ type: 'idle', message: '' });
   const [feedError, setFeedError] = useState('');
@@ -96,17 +92,10 @@ export default function HomeFeedPage() {
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
 
-  const selectedTagName = (() => {
-    if (!filters.tag) return 'All tags';
-    const match = tags.find((tag) => tag.id === filters.tag || tag.slug === filters.tag);
-    return match ? match.name : filters.tag;
-  })();
-
   useEffect(() => {
     let isMounted = true;
 
     async function loadTags() {
-      setLoadingTags(true);
       try {
         const result = await apiRequest('/posts/tags');
         if (!isMounted) return;
@@ -116,8 +105,6 @@ export default function HomeFeedPage() {
       } catch (error) {
         if (!isMounted) return;
         setBanner({ type: 'error', message: `Failed to load tags: ${error.message}` });
-      } finally {
-        if (isMounted) setLoadingTags(false);
       }
     }
 
@@ -153,7 +140,6 @@ export default function HomeFeedPage() {
         });
         const firstData = Array.isArray(firstPage.data) ? firstPage.data : [];
         const total = firstPage?.pagination?.total ?? firstData.length;
-        const archivedDuringRequest = firstPage?.meta?.archivedDuringRequest ?? 0;
         const allItems = [...firstData];
 
         let offset = firstData.length;
@@ -176,10 +162,6 @@ export default function HomeFeedPage() {
 
         startTransition(() => {
           setFeedItems(allItems);
-          setFeedMeta({
-            total,
-            archivedDuringRequest,
-          });
         });
       } catch (error) {
         if (!isMounted || error.name === 'AbortError') return;
@@ -208,36 +190,6 @@ export default function HomeFeedPage() {
     setRefreshTick((prev) => prev + 1);
   }
 
-  async function handleCreateTag(event) {
-    event.preventDefault();
-    if (!isAuthenticated) {
-      setBanner({ type: 'error', message: 'Sign in to create tags.' });
-      return;
-    }
-
-    const name = tagName.trim();
-    if (!name) return;
-
-    setSubmittingTag(true);
-    try {
-      await apiRequest('/posts/tags', {
-        method: 'POST',
-        body: JSON.stringify({ name }),
-      });
-      setTagName('');
-      setBanner({ type: 'success', message: `Tag "${name}" is ready.` });
-
-      const result = await apiRequest('/posts/tags');
-      startTransition(() => {
-        setTags(Array.isArray(result.data) ? result.data : []);
-      });
-    } catch (error) {
-      setBanner({ type: 'error', message: `Could not create tag: ${error.message}` });
-    } finally {
-      setSubmittingTag(false);
-    }
-  }
-
   async function handleCreatePost(event) {
     event.preventDefault();
     if (!isAuthenticated) {
@@ -250,10 +202,40 @@ export default function HomeFeedPage() {
       return;
     }
 
-    const tagsFromCsv = postForm.tagsCsv
+    const rawTagsFromCsv = postForm.tagsCsv
       .split(',')
       .map((value) => value.trim())
       .filter(Boolean);
+    const knownTagIds = new Map();
+    for (const tag of tags) {
+      knownTagIds.set(String(tag.id), String(tag.id));
+      knownTagIds.set(String(tag.slug || '').toLowerCase(), String(tag.id));
+      knownTagIds.set(String(tag.name || '').toLowerCase(), String(tag.id));
+    }
+
+    const resolvedTagIds = [];
+    const unknownTags = [];
+    for (const token of rawTagsFromCsv) {
+      if (/^[0-9a-fA-F-]{32,36}$/.test(token)) {
+        resolvedTagIds.push(token);
+        continue;
+      }
+
+      const tagId = knownTagIds.get(token.toLowerCase());
+      if (tagId) {
+        resolvedTagIds.push(tagId);
+      } else {
+        unknownTags.push(token);
+      }
+    }
+
+    if (unknownTags.length > 0) {
+      setBanner({
+        type: 'error',
+        message: `Unknown tag(s): ${unknownTags.join(', ')}. Ask a moderator to create them in Moderation.`,
+      });
+      return;
+    }
 
     const maybeAuthorId = user?.id && /^[0-9a-fA-F-]{32,36}$/.test(String(user.id)) ? user.id : undefined;
 
@@ -263,7 +245,7 @@ export default function HomeFeedPage() {
       summary: postForm.summary.trim(),
       status: postForm.status,
       pinned: postForm.pinned,
-      tags: tagsFromCsv,
+      tags: [...new Set(resolvedTagIds)],
       expiresAt: postForm.expiresAt || null,
       ...(maybeAuthorId ? { authorId: maybeAuthorId } : {}),
     };
@@ -381,10 +363,10 @@ export default function HomeFeedPage() {
 
             <div className="field-row two-col">
               <label>
-                <span>Tags (comma separated)</span>
+                <span>Tags (existing, comma separated)</span>
                 <input
                   type="text"
-                  placeholder="Announcements, Alumni, Urgent"
+                  placeholder="Use existing tag names or slugs"
                   value={postForm.tagsCsv}
                   onChange={(e) => updatePostField('tagsCsv', e.target.value)}
                   disabled={!isAuthenticated}
@@ -417,63 +399,6 @@ export default function HomeFeedPage() {
           </form>
         </section>
 
-        <section className="panel tag-panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Taxonomy</p>
-              <h3>Tags</h3>
-            </div>
-            <span className="pill pill-ghost">POST /posts/tags</span>
-          </div>
-
-          <form className="inline-form" onSubmit={handleCreateTag}>
-            <label className="sr-only" htmlFor="new-tag-name">Tag name</label>
-            <input
-              id="new-tag-name"
-              type="text"
-              placeholder={isAuthenticated ? 'Create a tag (e.g. Research)' : 'Sign in to create tags'}
-              value={tagName}
-              onChange={(e) => setTagName(e.target.value)}
-              disabled={!isAuthenticated}
-            />
-            <button className="btn btn-accent" type="submit" disabled={submittingTag || !isAuthenticated}>
-              {submittingTag ? 'Adding...' : 'Add Tag'}
-            </button>
-          </form>
-
-          <div className="tag-list-wrap">
-            {loadingTags ? (
-              <p className="muted-line">Loading tags...</p>
-            ) : tags.length === 0 ? (
-              <p className="muted-line">No tags yet. Create one to start organizing the feed.</p>
-            ) : (
-              <ul className="tag-cloud" aria-label="Existing tags">
-                {tags.map((tag) => (
-                  <li key={tag.id}>
-                    <button
-                      type="button"
-                      className={`tag-chip ${filters.tag && (filters.tag === tag.id || filters.tag === tag.slug) ? 'is-active' : ''}`}
-                      onClick={() => updateFilter('tag', filters.tag === tag.id ? '' : tag.id)}
-                      title={`Filter feed by ${tag.name}`}
-                    >
-                      <span>{tag.name}</span>
-                      <small>{tag.slug}</small>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="api-note">
-            <p>API Base: <code>{API_BASE_URL}</code></p>
-            <p>Selected Tag Filter: <strong>{selectedTagName}</strong></p>
-            <p>Role-aware actions: {isModerator ? 'Moderator controls enabled' : 'Standard controls'}</p>
-            {feedMeta.archivedDuringRequest > 0 && (
-              <p>{feedMeta.archivedDuringRequest} expired post(s) auto-archived during last feed refresh.</p>
-            )}
-          </div>
-        </section>
       </section>
 
       <section className="panel feed-panel">
