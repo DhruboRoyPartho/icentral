@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useState } from 'react';
+import { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 
@@ -9,22 +9,25 @@ const initialPostForm = {
   title: '',
   summary: '',
   status: 'published',
-  tagsCsv: '',
+  tagIds: [],
   pinned: false,
   expiresAt: '',
 };
 
 const initialFilters = {
   type: '',
-  status: 'published',
+  status: 'all',
   tag: '',
   pinnedOnly: false,
 };
+const FEED_PAGE_LIMIT = 10;
 
 async function apiRequest(path, options = {}) {
+  const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
       ...(options.headers || {}),
     },
     ...options,
@@ -76,36 +79,44 @@ function toLocalDateTimeInput(isoString) {
 
 export default function HomeFeedPage() {
   const { isAuthenticated, isModerator, user } = useAuth();
+  const imageInputRef = useRef(null);
   const [feedItems, setFeedItems] = useState([]);
   const [tags, setTags] = useState([]);
-  const [feedMeta, setFeedMeta] = useState({ total: 0, archivedDuringRequest: 0 });
   const [postForm, setPostForm] = useState(initialPostForm);
-  const [tagName, setTagName] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [filters, setFilters] = useState(initialFilters);
   const [loadingFeed, setLoadingFeed] = useState(true);
-  const [loadingTags, setLoadingTags] = useState(true);
   const [submittingPost, setSubmittingPost] = useState(false);
-  const [submittingTag, setSubmittingTag] = useState(false);
   const [actionBusyPostId, setActionBusyPostId] = useState(null);
   const [banner, setBanner] = useState({ type: 'idle', message: '' });
   const [feedError, setFeedError] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
+  const [tagSearchInput, setTagSearchInput] = useState('');
+  const [composerImage, setComposerImage] = useState(null);
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
-
-  const selectedTagName = (() => {
-    if (!filters.tag) return 'All tags';
-    const match = tags.find((tag) => tag.id === filters.tag || tag.slug === filters.tag);
-    return match ? match.name : filters.tag;
-  })();
+  const composerAvatar = String(user?.full_name || user?.name || user?.email || 'G').trim().charAt(0).toUpperCase() || 'G';
+  const composerSelectedTagIds = Array.isArray(postForm.tagIds)
+    ? postForm.tagIds.map((value) => String(value)).filter(Boolean)
+    : [];
+  const composerSelectedTagIdSet = new Set(composerSelectedTagIds);
+  const selectedComposerTags = tags.filter((tag) => composerSelectedTagIdSet.has(String(tag.id)));
+  const normalizedTagQuery = tagSearchInput.trim().toLowerCase();
+  const filteredTagResults = tags
+    .filter((tag) => {
+      if (composerSelectedTagIdSet.has(String(tag.id))) return false;
+      if (!normalizedTagQuery) return true;
+      const name = String(tag.name || '').toLowerCase();
+      const slug = String(tag.slug || '').toLowerCase();
+      return name.includes(normalizedTagQuery) || slug.includes(normalizedTagQuery);
+    })
+    .slice(0, 8);
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadTags() {
-      setLoadingTags(true);
       try {
         const result = await apiRequest('/posts/tags');
         if (!isMounted) return;
@@ -115,8 +126,6 @@ export default function HomeFeedPage() {
       } catch (error) {
         if (!isMounted) return;
         setBanner({ type: 'error', message: `Failed to load tags: ${error.message}` });
-      } finally {
-        if (isMounted) setLoadingTags(false);
       }
     }
 
@@ -134,27 +143,28 @@ export default function HomeFeedPage() {
       setLoadingFeed(true);
       setFeedError('');
 
-      const params = new URLSearchParams();
-      if (filters.type) params.set('type', filters.type);
-      if (filters.status) params.set('status', filters.status);
-      if (filters.tag) params.set('tag', filters.tag);
-      if (filters.pinnedOnly) params.set('pinnedOnly', 'true');
-      if (activeSearch) params.set('search', activeSearch);
-      params.set('limit', '24');
+      const baseParams = new URLSearchParams();
+      if (filters.type) baseParams.set('type', filters.type);
+      if (filters.status) baseParams.set('status', filters.status);
+      if (filters.status === 'all') baseParams.set('includeArchived', 'true');
+      if (filters.tag) baseParams.set('tag', filters.tag);
+      if (filters.pinnedOnly) baseParams.set('pinnedOnly', 'true');
+      if (activeSearch) baseParams.set('search', activeSearch);
 
       try {
+        const params = new URLSearchParams(baseParams);
+        params.set('limit', String(FEED_PAGE_LIMIT));
+        params.set('offset', '0');
+
         const result = await apiRequest(`/posts/feed?${params.toString()}`, {
           signal: controller.signal,
         });
+        const items = Array.isArray(result.data) ? result.data : [];
 
         if (!isMounted) return;
 
         startTransition(() => {
-          setFeedItems(Array.isArray(result.data) ? result.data : []);
-          setFeedMeta({
-            total: result?.pagination?.total ?? 0,
-            archivedDuringRequest: result?.meta?.archivedDuringRequest ?? 0,
-          });
+          setFeedItems(items);
         });
       } catch (error) {
         if (!isMounted || error.name === 'AbortError') return;
@@ -171,13 +181,6 @@ export default function HomeFeedPage() {
     };
   }, [filters, activeSearch, refreshTick]);
 
-  const stats = {
-    total: feedMeta.total || feedItems.length,
-    pinned: feedItems.filter((item) => item.pinned).length,
-    published: feedItems.filter((item) => item.status === 'published').length,
-    tags: tags.length,
-  };
-
   function updateFilter(field, value) {
     setFilters((prev) => ({ ...prev, [field]: value }));
   }
@@ -186,38 +189,77 @@ export default function HomeFeedPage() {
     setPostForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  function isPostOwner(post) {
+    if (!post?.authorId || !user?.id) return false;
+    return String(post.authorId) === String(user.id);
+  }
+
+  function canUpdatePostExpiry(post) {
+    if (!isAuthenticated) return false;
+    return isModerator || isPostOwner(post);
+  }
+
+  function addTagToComposer(tagId) {
+    updatePostField('tagIds', [...new Set([...composerSelectedTagIds, String(tagId)])]);
+    setTagSearchInput('');
+  }
+
+  function removeTagFromComposer(tagId) {
+    updatePostField('tagIds', composerSelectedTagIds.filter((id) => id !== String(tagId)));
+  }
+
   function refreshFeed() {
     setRefreshTick((prev) => prev + 1);
   }
 
-  async function handleCreateTag(event) {
-    event.preventDefault();
-    if (!isAuthenticated) {
-      setBanner({ type: 'error', message: 'Sign in to create tags.' });
+  function openImagePicker() {
+    imageInputRef.current?.click();
+  }
+
+  function clearComposerImage() {
+    setComposerImage(null);
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  }
+
+  function handleImageSelected(event) {
+    const [file] = Array.from(event.target.files || []);
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setBanner({ type: 'error', message: 'Only image files are supported.' });
       return;
     }
 
-    const name = tagName.trim();
-    if (!name) return;
-
-    setSubmittingTag(true);
-    try {
-      await apiRequest('/posts/tags', {
-        method: 'POST',
-        body: JSON.stringify({ name }),
-      });
-      setTagName('');
-      setBanner({ type: 'success', message: `Tag "${name}" is ready.` });
-
-      const result = await apiRequest('/posts/tags');
-      startTransition(() => {
-        setTags(Array.isArray(result.data) ? result.data : []);
-      });
-    } catch (error) {
-      setBanner({ type: 'error', message: `Could not create tag: ${error.message}` });
-    } finally {
-      setSubmittingTag(false);
+    const maxBytes = 900 * 1024;
+    if (file.size > maxBytes) {
+      setBanner({ type: 'error', message: 'Image is too large. Please choose one under 900 KB.' });
+      return;
     }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl) {
+        setBanner({ type: 'error', message: 'Could not read the selected image.' });
+        return;
+      }
+
+      const entityId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `img-${Date.now()}`;
+
+      setComposerImage({
+        dataUrl,
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        entityId,
+      });
+    };
+    reader.onerror = () => {
+      setBanner({ type: 'error', message: 'Failed to load selected image.' });
+    };
+    reader.readAsDataURL(file);
   }
 
   async function handleCreatePost(event) {
@@ -232,11 +274,6 @@ export default function HomeFeedPage() {
       return;
     }
 
-    const tagsFromCsv = postForm.tagsCsv
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
-
     const maybeAuthorId = user?.id && /^[0-9a-fA-F-]{32,36}$/.test(String(user.id)) ? user.id : undefined;
 
     const payload = {
@@ -245,8 +282,20 @@ export default function HomeFeedPage() {
       summary: postForm.summary.trim(),
       status: postForm.status,
       pinned: postForm.pinned,
-      tags: tagsFromCsv,
+      tags: [...new Set(composerSelectedTagIds)],
       expiresAt: postForm.expiresAt || null,
+      ...(composerImage ? {
+        ref: {
+          service: 'image-upload',
+          entityId: composerImage.entityId,
+          metadata: {
+            imageDataUrl: composerImage.dataUrl,
+            fileName: composerImage.fileName,
+            fileType: composerImage.fileType,
+            fileSize: composerImage.fileSize,
+          },
+        },
+      } : {}),
       ...(maybeAuthorId ? { authorId: maybeAuthorId } : {}),
     };
 
@@ -258,6 +307,8 @@ export default function HomeFeedPage() {
       });
 
       setPostForm(initialPostForm);
+      setTagSearchInput('');
+      clearComposerImage();
       setBanner({ type: 'success', message: 'Post created and added to the feed.' });
       refreshFeed();
     } catch (error) {
@@ -267,10 +318,18 @@ export default function HomeFeedPage() {
     }
   }
 
-  async function patchPost(postId, payload, successMessage) {
+  async function patchPost(postId, payload, successMessage, options = {}) {
     if (!isAuthenticated) {
       setBanner({ type: 'error', message: 'Sign in to update posts.' });
       return;
+    }
+
+    if (options.enforceExpiryPermission) {
+      const targetPost = options.post || feedItems.find((item) => item.id === postId);
+      if (!canUpdatePostExpiry(targetPost)) {
+        setBanner({ type: 'error', message: 'Only moderators and the original author can update expiry.' });
+        return;
+      }
     }
 
     setActionBusyPostId(postId);
@@ -290,24 +349,6 @@ export default function HomeFeedPage() {
 
   return (
     <div className="home-feed-page">
-      <section className="panel hero-panel">
-        <div className="hero-copy">
-          <p className="eyebrow">Home Feed</p>
-          <h2>All post types in one social-style stream</h2>
-          <p className="hero-subtext">
-            Home combines announcements, jobs, events, collaboration posts, and future modules into a single
-            unified feed from the post-service.
-          </p>
-        </div>
-
-        <div className="hero-stats" aria-label="Feed summary">
-          <article className="stat-tile"><span>Total in query</span><strong>{stats.total}</strong></article>
-          <article className="stat-tile"><span>Pinned</span><strong>{stats.pinned}</strong></article>
-          <article className="stat-tile"><span>Published</span><strong>{stats.published}</strong></article>
-          <article className="stat-tile"><span>Tags</span><strong>{stats.tags}</strong></article>
-        </div>
-      </section>
-
       {banner.message && (
         <section className={`banner banner-${banner.type === 'error' ? 'error' : 'success'}`} aria-live="polite">
           <p>{banner.message}</p>
@@ -334,9 +375,62 @@ export default function HomeFeedPage() {
             </div>
           )}
 
-          <form className="stacked-form" onSubmit={handleCreatePost}>
-            <div className="field-row two-col">
-              <label>
+          <form className="composer-horizontal-form" onSubmit={handleCreatePost}>
+            <div className="composer-quick-row">
+              <span className="composer-avatar-badge" aria-hidden="true">{composerAvatar}</span>
+
+              <label className="sr-only" htmlFor="new-post-summary">Summary</label>
+              <input
+                id="new-post-summary"
+                className="composer-summary-input"
+                type="text"
+                placeholder={isAuthenticated ? "What's on your mind?" : 'Sign in to write a post summary'}
+                value={postForm.summary}
+                onChange={(e) => updatePostField('summary', e.target.value)}
+                disabled={!isAuthenticated}
+              />
+
+              <div className="composer-action-row">
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="composer-image-input"
+                  onChange={handleImageSelected}
+                  disabled={!isAuthenticated}
+                />
+                <button
+                  className="btn btn-soft composer-image-btn"
+                  type="button"
+                  onClick={openImagePicker}
+                  disabled={!isAuthenticated}
+                  aria-label="Add picture"
+                  title="Add picture"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 5h4l1.2-1.8A2 2 0 0 1 10.9 2h2.2a2 2 0 0 1 1.7 1.2L16 5h4a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm8 3.5A5.5 5.5 0 1 0 12 19a5.5 5.5 0 0 0 0-11zm0 2A3.5 3.5 0 1 1 8.5 14 3.5 3.5 0 0 1 12 10.5z" />
+                  </svg>
+                </button>
+                <button className="btn btn-primary-solid composer-submit-btn" type="submit" disabled={submittingPost || !isAuthenticated}>
+                  {submittingPost ? 'Creating...' : 'Create Post'}
+                </button>
+              </div>
+            </div>
+
+            {composerImage && (
+              <div className="composer-image-preview">
+                <img src={composerImage.dataUrl} alt={composerImage.fileName || 'Selected upload'} />
+                <div className="composer-image-meta">
+                  <p>{composerImage.fileName}</p>
+                  <button type="button" className="btn btn-soft" onClick={clearComposerImage}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="composer-details-row">
+              <label className="composer-field field-type">
                 <span>Type</span>
                 <select value={postForm.type} onChange={(e) => updatePostField('type', e.target.value)} disabled={!isAuthenticated}>
                   <option value="ANNOUNCEMENT">Announcement</option>
@@ -347,7 +441,8 @@ export default function HomeFeedPage() {
                   <option value="COLLAB">Collaboration</option>
                 </select>
               </label>
-              <label>
+
+              <label className="composer-field field-status">
                 <span>Status</span>
                 <select value={postForm.status} onChange={(e) => updatePostField('status', e.target.value)} disabled={!isAuthenticated}>
                   <option value="published">Published</option>
@@ -355,43 +450,77 @@ export default function HomeFeedPage() {
                   <option value="archived">Archived</option>
                 </select>
               </label>
-            </div>
 
-            <label>
-              <span>Title</span>
-              <input
-                type="text"
-                placeholder="Optional headline"
-                value={postForm.title}
-                onChange={(e) => updatePostField('title', e.target.value)}
-                disabled={!isAuthenticated}
-              />
-            </label>
-
-            <label>
-              <span>Summary</span>
-              <textarea
-                rows={4}
-                placeholder="What should appear in the feed?"
-                value={postForm.summary}
-                onChange={(e) => updatePostField('summary', e.target.value)}
-                disabled={!isAuthenticated}
-              />
-            </label>
-
-            <div className="field-row two-col">
-              <label>
-                <span>Tags (comma separated)</span>
+              <label className="composer-field field-title">
+                <span>Title</span>
                 <input
                   type="text"
-                  placeholder="Announcements, Alumni, Urgent"
-                  value={postForm.tagsCsv}
-                  onChange={(e) => updatePostField('tagsCsv', e.target.value)}
+                  placeholder="Optional headline"
+                  value={postForm.title}
+                  onChange={(e) => updatePostField('title', e.target.value)}
                   disabled={!isAuthenticated}
                 />
               </label>
-              <label>
-                <span>Expires At</span>
+
+              <label className="composer-field field-tags">
+                <span>Tags</span>
+                <div className="composer-tag-search-shell">
+                  <input
+                    className="composer-tag-search-input"
+                    type="search"
+                    placeholder={tags.length === 0 ? 'No tags available' : 'Search tags and press Enter'}
+                    value={tagSearchInput}
+                    onChange={(e) => setTagSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      if (!normalizedTagQuery || filteredTagResults.length === 0) return;
+                      e.preventDefault();
+                      addTagToComposer(filteredTagResults[0].id);
+                    }}
+                    disabled={!isAuthenticated || tags.length === 0}
+                  />
+
+                  {isAuthenticated && normalizedTagQuery && filteredTagResults.length > 0 && (
+                    <ul className="composer-tag-results" role="listbox" aria-label="Matching tags">
+                      {filteredTagResults.map((tag) => (
+                        <li key={tag.id}>
+                          <button type="button" onClick={() => addTagToComposer(tag.id)}>
+                            <span>{tag.name}</span>
+                            <small>{tag.slug}</small>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {selectedComposerTags.length > 0 && (
+                  <div className="composer-selected-tags" aria-label="Selected tags">
+                    {selectedComposerTags.map((tag) => (
+                      <button
+                        type="button"
+                        className="composer-tag-chip"
+                        key={tag.id}
+                        onClick={() => removeTagFromComposer(tag.id)}
+                        aria-label={`Remove tag ${tag.name}`}
+                        title={`Remove ${tag.name}`}
+                      >
+                        <span>{tag.name}</span>
+                        <strong aria-hidden="true">×</strong>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <small className="composer-tag-hint">
+                  {tags.length === 0
+                    ? 'No tags available yet.'
+                    : `${composerSelectedTagIds.length} tag(s) selected.`}
+                </small>
+              </label>
+
+              <label className="composer-field field-expires">
+                <span>Expires</span>
                 <input
                   type="datetime-local"
                   value={postForm.expiresAt}
@@ -400,80 +529,9 @@ export default function HomeFeedPage() {
                 />
               </label>
             </div>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={postForm.pinned}
-                onChange={(e) => updatePostField('pinned', e.target.checked)}
-                disabled={!isAuthenticated}
-              />
-              <span>Pin immediately</span>
-            </label>
-
-            <button className="btn btn-primary-solid" type="submit" disabled={submittingPost || !isAuthenticated}>
-              {submittingPost ? 'Creating...' : 'Create Post'}
-            </button>
           </form>
         </section>
 
-        <section className="panel tag-panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Taxonomy</p>
-              <h3>Tags</h3>
-            </div>
-            <span className="pill pill-ghost">POST /posts/tags</span>
-          </div>
-
-          <form className="inline-form" onSubmit={handleCreateTag}>
-            <label className="sr-only" htmlFor="new-tag-name">Tag name</label>
-            <input
-              id="new-tag-name"
-              type="text"
-              placeholder={isAuthenticated ? 'Create a tag (e.g. Research)' : 'Sign in to create tags'}
-              value={tagName}
-              onChange={(e) => setTagName(e.target.value)}
-              disabled={!isAuthenticated}
-            />
-            <button className="btn btn-accent" type="submit" disabled={submittingTag || !isAuthenticated}>
-              {submittingTag ? 'Adding...' : 'Add Tag'}
-            </button>
-          </form>
-
-          <div className="tag-list-wrap">
-            {loadingTags ? (
-              <p className="muted-line">Loading tags...</p>
-            ) : tags.length === 0 ? (
-              <p className="muted-line">No tags yet. Create one to start organizing the feed.</p>
-            ) : (
-              <ul className="tag-cloud" aria-label="Existing tags">
-                {tags.map((tag) => (
-                  <li key={tag.id}>
-                    <button
-                      type="button"
-                      className={`tag-chip ${filters.tag && (filters.tag === tag.id || filters.tag === tag.slug) ? 'is-active' : ''}`}
-                      onClick={() => updateFilter('tag', filters.tag === tag.id ? '' : tag.id)}
-                      title={`Filter feed by ${tag.name}`}
-                    >
-                      <span>{tag.name}</span>
-                      <small>{tag.slug}</small>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="api-note">
-            <p>API Base: <code>{API_BASE_URL}</code></p>
-            <p>Selected Tag Filter: <strong>{selectedTagName}</strong></p>
-            <p>Role-aware actions: {isModerator ? 'Moderator controls enabled' : 'Standard controls'}</p>
-            {feedMeta.archivedDuringRequest > 0 && (
-              <p>{feedMeta.archivedDuringRequest} expired post(s) auto-archived during last feed refresh.</p>
-            )}
-          </div>
-        </section>
       </section>
 
       <section className="panel feed-panel">
@@ -572,6 +630,20 @@ export default function HomeFeedPage() {
                   </div>
                 </div>
 
+                {Array.isArray(item.refs) && item.refs.length > 0 && (() => {
+                  const imageRef = item.refs.find((ref) => ref?.service === 'image-upload' && ref?.metadata?.imageDataUrl);
+                  if (!imageRef) return null;
+                  return (
+                    <div className="feed-image-wrap">
+                      <img
+                        src={imageRef.metadata.imageDataUrl}
+                        alt={item.title || 'Post image'}
+                        loading="lazy"
+                      />
+                    </div>
+                  );
+                })()}
+
                 <p className="feed-summary">{item.summary || 'No summary provided.'}</p>
 
                 {Array.isArray(item.tags) && item.tags.length > 0 && (
@@ -593,19 +665,26 @@ export default function HomeFeedPage() {
                 </div>
 
                 <div className="feed-card-actions social-actions">
+                  {isModerator && (
+                    <button
+                      className="btn btn-soft"
+                      type="button"
+                      disabled={actionBusyPostId === item.id || !isAuthenticated}
+                      onClick={() => patchPost(item.id, { pinned: !item.pinned }, item.pinned ? 'Post unpinned.' : 'Post pinned.')}
+                    >
+                      {item.pinned ? 'Unpin' : 'Pin'}
+                    </button>
+                  )}
                   <button
                     className="btn btn-soft"
                     type="button"
-                    disabled={actionBusyPostId === item.id || !isAuthenticated}
-                    onClick={() => patchPost(item.id, { pinned: !item.pinned }, item.pinned ? 'Post unpinned.' : 'Post pinned.')}
-                  >
-                    {item.pinned ? 'Unpin' : 'Pin'}
-                  </button>
-                  <button
-                    className="btn btn-soft"
-                    type="button"
-                    disabled={actionBusyPostId === item.id || !isAuthenticated || item.status === 'archived'}
-                    onClick={() => patchPost(item.id, { expiresAt: toLocalDateTimeInput(new Date(Date.now() + 3600_000).toISOString()) }, 'Expiry updated (+1 hour).')}
+                    disabled={actionBusyPostId === item.id || !isAuthenticated || item.status === 'archived' || !canUpdatePostExpiry(item)}
+                    onClick={() => patchPost(
+                      item.id,
+                      { expiresAt: toLocalDateTimeInput(new Date(Date.now() + 3600_000).toISOString()) },
+                      'Expiry updated (+1 hour).',
+                      { enforceExpiryPermission: true, post: item },
+                    )}
                   >
                     Set +1h Expiry
                   </button>
@@ -619,18 +698,6 @@ export default function HomeFeedPage() {
                   </button>
                 </div>
 
-                {Array.isArray(item.refs) && item.refs.length > 0 && (
-                  <div className="ref-box">
-                    <p className="eyebrow">Linked module record</p>
-                    <ul>
-                      {item.refs.map((ref, refIndex) => (
-                        <li key={`${item.id}-ref-${refIndex}`}>
-                          <code>{ref.service}</code> / <code>{ref.entityId}</code>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </article>
             ))}
           </div>

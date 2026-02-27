@@ -1,8 +1,9 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
+const jwt = require('jsonwebtoken');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 const PORT = Number(process.env.PORT) || 3002;
 
@@ -19,6 +20,7 @@ const CONFIG = {
     feedDefaultLimit: Number(process.env.POST_FEED_DEFAULT_LIMIT) || 20,
     feedMaxLimit: Number(process.env.POST_FEED_MAX_LIMIT) || 100,
     archiveIntervalMs: Number(process.env.POST_ARCHIVE_INTERVAL_MS) || 0,
+    jwtSecret: process.env.JWT_SECRET || 'HelloWorldKey',
 };
 
 const supabase = (CONFIG.supabaseUrl && CONFIG.supabaseKey)
@@ -127,6 +129,25 @@ function ensureDb(req, res, next) {
         return dbUnavailable(res);
     }
     return next();
+}
+
+function getRequestUser(req) {
+    const header = req.headers.authorization || '';
+    if (!header.startsWith('Bearer ')) return null;
+
+    const token = header.slice(7).trim();
+    if (!token) return null;
+
+    try {
+        return jwt.verify(token, CONFIG.jwtSecret);
+    } catch {
+        return null;
+    }
+}
+
+function isModeratorRole(role) {
+    const normalized = String(role || '').toLowerCase();
+    return normalized === 'admin' || normalized === 'faculty';
 }
 
 function buildPostPayload(body, { partial = false } = {}) {
@@ -477,6 +498,21 @@ async function getPostById(postId) {
     return enriched || null;
 }
 
+async function getPostAuthorId(postId) {
+    const { data, error } = await supabase
+        .from(CONFIG.tables.posts)
+        .select('author_id')
+        .eq('id', postId)
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+
+    if (!data) return null;
+    return data.author_id || null;
+}
+
 async function resolveTagFilterPostIds(tagFilter) {
     if (!tagFilter) return null;
 
@@ -551,7 +587,9 @@ app.get('/feed', ensureDb, async (req, res) => {
         const offset = parseIntInRange(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
         const includeArchived = parseBool(req.query.includeArchived, false);
         const pinnedOnly = parseBool(req.query.pinnedOnly, false);
-        const status = req.query.status;
+        const status = typeof req.query.status === 'string'
+            ? req.query.status.trim().toLowerCase()
+            : '';
         const type = req.query.type;
         const authorId = req.query.authorId || req.query.author_id;
         const tag = req.query.tag;
@@ -575,11 +613,9 @@ app.get('/feed', ensureDb, async (req, res) => {
 
         if (status && status !== 'all') {
             query = query.eq('status', status);
-        } else if (!includeArchived) {
+        } else if (!status && !includeArchived) {
             query = query.eq('status', 'published');
-        }
-
-        if (includeArchived === false && (!status || status === 'all')) {
+        } else if (status === 'all' && !includeArchived) {
             query = query.neq('status', 'archived');
         }
 
@@ -685,11 +721,32 @@ app.patch('/posts/:id', ensureDb, async (req, res) => {
         const hasPostFields = Object.keys(payload.postFields).length > 0;
         const hasTagChanges = payload.tagsProvided;
         const hasRefChanges = payload.refProvided;
+        const isExpiryUpdate = Object.prototype.hasOwnProperty.call(payload.postFields, 'expires_at');
 
         if (!hasPostFields && !hasTagChanges && !hasRefChanges) {
             return res.status(400).json({
                 error: 'No supported fields provided for update',
             });
+        }
+
+        if (isExpiryUpdate) {
+            const requestUser = getRequestUser(req);
+            if (!requestUser?.id) {
+                return res.status(401).json({ error: 'Authentication is required to update expiry.' });
+            }
+
+            if (!isModeratorRole(requestUser.role)) {
+                const authorId = await getPostAuthorId(req.params.id);
+                if (authorId === null) {
+                    return res.status(404).json({ error: 'Post not found' });
+                }
+
+                if (!authorId || String(authorId) !== String(requestUser.id)) {
+                    return res.status(403).json({
+                        error: 'Only moderators and the original author can update expiry.',
+                    });
+                }
+            }
         }
 
         if (hasPostFields) {
