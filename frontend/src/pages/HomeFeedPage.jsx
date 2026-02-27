@@ -9,7 +9,7 @@ const initialPostForm = {
   title: '',
   summary: '',
   status: 'published',
-  tagsCsv: '',
+  tagIds: [],
   pinned: false,
   expiresAt: '',
 };
@@ -88,10 +88,26 @@ export default function HomeFeedPage() {
   const [banner, setBanner] = useState({ type: 'idle', message: '' });
   const [feedError, setFeedError] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
+  const [tagSearchInput, setTagSearchInput] = useState('');
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
   const composerAvatar = String(user?.full_name || user?.name || user?.email || 'G').trim().charAt(0).toUpperCase() || 'G';
+  const composerSelectedTagIds = Array.isArray(postForm.tagIds)
+    ? postForm.tagIds.map((value) => String(value)).filter(Boolean)
+    : [];
+  const composerSelectedTagIdSet = new Set(composerSelectedTagIds);
+  const selectedComposerTags = tags.filter((tag) => composerSelectedTagIdSet.has(String(tag.id)));
+  const normalizedTagQuery = tagSearchInput.trim().toLowerCase();
+  const filteredTagResults = tags
+    .filter((tag) => {
+      if (composerSelectedTagIdSet.has(String(tag.id))) return false;
+      if (!normalizedTagQuery) return true;
+      const name = String(tag.name || '').toLowerCase();
+      const slug = String(tag.slug || '').toLowerCase();
+      return name.includes(normalizedTagQuery) || slug.includes(normalizedTagQuery);
+    })
+    .slice(0, 8);
 
   useEffect(() => {
     let isMounted = true;
@@ -187,6 +203,15 @@ export default function HomeFeedPage() {
     setPostForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  function addTagToComposer(tagId) {
+    updatePostField('tagIds', [...new Set([...composerSelectedTagIds, String(tagId)])]);
+    setTagSearchInput('');
+  }
+
+  function removeTagFromComposer(tagId) {
+    updatePostField('tagIds', composerSelectedTagIds.filter((id) => id !== String(tagId)));
+  }
+
   function refreshFeed() {
     setRefreshTick((prev) => prev + 1);
   }
@@ -203,41 +228,6 @@ export default function HomeFeedPage() {
       return;
     }
 
-    const rawTagsFromCsv = postForm.tagsCsv
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
-    const knownTagIds = new Map();
-    for (const tag of tags) {
-      knownTagIds.set(String(tag.id), String(tag.id));
-      knownTagIds.set(String(tag.slug || '').toLowerCase(), String(tag.id));
-      knownTagIds.set(String(tag.name || '').toLowerCase(), String(tag.id));
-    }
-
-    const resolvedTagIds = [];
-    const unknownTags = [];
-    for (const token of rawTagsFromCsv) {
-      if (/^[0-9a-fA-F-]{32,36}$/.test(token)) {
-        resolvedTagIds.push(token);
-        continue;
-      }
-
-      const tagId = knownTagIds.get(token.toLowerCase());
-      if (tagId) {
-        resolvedTagIds.push(tagId);
-      } else {
-        unknownTags.push(token);
-      }
-    }
-
-    if (unknownTags.length > 0) {
-      setBanner({
-        type: 'error',
-        message: `Unknown tag(s): ${unknownTags.join(', ')}. Ask a moderator to create them in Moderation.`,
-      });
-      return;
-    }
-
     const maybeAuthorId = user?.id && /^[0-9a-fA-F-]{32,36}$/.test(String(user.id)) ? user.id : undefined;
 
     const payload = {
@@ -246,7 +236,7 @@ export default function HomeFeedPage() {
       summary: postForm.summary.trim(),
       status: postForm.status,
       pinned: postForm.pinned,
-      tags: [...new Set(resolvedTagIds)],
+      tags: [...new Set(composerSelectedTagIds)],
       expiresAt: postForm.expiresAt || null,
       ...(maybeAuthorId ? { authorId: maybeAuthorId } : {}),
     };
@@ -259,6 +249,7 @@ export default function HomeFeedPage() {
       });
 
       setPostForm(initialPostForm);
+      setTagSearchInput('');
       setBanner({ type: 'success', message: 'Post created and added to the feed.' });
       refreshFeed();
     } catch (error) {
@@ -372,13 +363,59 @@ export default function HomeFeedPage() {
 
               <label className="composer-field field-tags">
                 <span>Tags</span>
-                <input
-                  type="text"
-                  placeholder="Existing names/slugs"
-                  value={postForm.tagsCsv}
-                  onChange={(e) => updatePostField('tagsCsv', e.target.value)}
-                  disabled={!isAuthenticated}
-                />
+                <div className="composer-tag-search-shell">
+                  <input
+                    className="composer-tag-search-input"
+                    type="search"
+                    placeholder={tags.length === 0 ? 'No tags available' : 'Search tags and press Enter'}
+                    value={tagSearchInput}
+                    onChange={(e) => setTagSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return;
+                      if (!normalizedTagQuery || filteredTagResults.length === 0) return;
+                      e.preventDefault();
+                      addTagToComposer(filteredTagResults[0].id);
+                    }}
+                    disabled={!isAuthenticated || tags.length === 0}
+                  />
+
+                  {isAuthenticated && normalizedTagQuery && filteredTagResults.length > 0 && (
+                    <ul className="composer-tag-results" role="listbox" aria-label="Matching tags">
+                      {filteredTagResults.map((tag) => (
+                        <li key={tag.id}>
+                          <button type="button" onClick={() => addTagToComposer(tag.id)}>
+                            <span>{tag.name}</span>
+                            <small>{tag.slug}</small>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {selectedComposerTags.length > 0 && (
+                  <div className="composer-selected-tags" aria-label="Selected tags">
+                    {selectedComposerTags.map((tag) => (
+                      <button
+                        type="button"
+                        className="composer-tag-chip"
+                        key={tag.id}
+                        onClick={() => removeTagFromComposer(tag.id)}
+                        aria-label={`Remove tag ${tag.name}`}
+                        title={`Remove ${tag.name}`}
+                      >
+                        <span>{tag.name}</span>
+                        <strong aria-hidden="true">×</strong>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <small className="composer-tag-hint">
+                  {tags.length === 0
+                    ? 'No tags available yet.'
+                    : `${composerSelectedTagIds.length} tag(s) selected.`}
+                </small>
               </label>
 
               <label className="composer-field field-expires">
