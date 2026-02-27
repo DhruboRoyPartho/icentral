@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../context/useAuth';
 
 const FEED_SECTIONS = [
   { key: 'home', label: 'Home', to: '/home', hint: 'All posts', roles: 'all' },
@@ -143,4 +143,3 @@ export default function AppShell() {
     </div>
   );
 }
-
