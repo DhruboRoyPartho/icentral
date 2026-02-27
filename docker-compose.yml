@@ -6,6 +6,11 @@ services:
     build: ./frontend
     ports:
       - "5173:5173" # Binds Vite's container port to your computer's port
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
     depends_on:
       - api-gateway
 
@@ -51,3 +56,6 @@ services:
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - JWT_SECRET=${JWT_SECRET:-HelloWorldKey}
       - CORS_ORIGIN=http://localhost:5173
+
+volumes:
+  frontend_node_modules:

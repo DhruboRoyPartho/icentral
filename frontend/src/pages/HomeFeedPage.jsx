@@ -16,10 +16,11 @@ const initialPostForm = {
 
 const initialFilters = {
   type: '',
-  status: 'published',
+  status: 'all',
   tag: '',
   pinnedOnly: false,
 };
+const FEED_PAGE_LIMIT = 100;
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -134,26 +135,50 @@ export default function HomeFeedPage() {
       setLoadingFeed(true);
       setFeedError('');
 
-      const params = new URLSearchParams();
-      if (filters.type) params.set('type', filters.type);
-      if (filters.status) params.set('status', filters.status);
-      if (filters.tag) params.set('tag', filters.tag);
-      if (filters.pinnedOnly) params.set('pinnedOnly', 'true');
-      if (activeSearch) params.set('search', activeSearch);
-      params.set('limit', '24');
+      const baseParams = new URLSearchParams();
+      if (filters.type) baseParams.set('type', filters.type);
+      if (filters.status) baseParams.set('status', filters.status);
+      if (filters.status === 'all') baseParams.set('includeArchived', 'true');
+      if (filters.tag) baseParams.set('tag', filters.tag);
+      if (filters.pinnedOnly) baseParams.set('pinnedOnly', 'true');
+      if (activeSearch) baseParams.set('search', activeSearch);
 
       try {
-        const result = await apiRequest(`/posts/feed?${params.toString()}`, {
+        const params = new URLSearchParams(baseParams);
+        params.set('limit', String(FEED_PAGE_LIMIT));
+        params.set('offset', '0');
+
+        const firstPage = await apiRequest(`/posts/feed?${params.toString()}`, {
           signal: controller.signal,
         });
+        const firstData = Array.isArray(firstPage.data) ? firstPage.data : [];
+        const total = firstPage?.pagination?.total ?? firstData.length;
+        const archivedDuringRequest = firstPage?.meta?.archivedDuringRequest ?? 0;
+        const allItems = [...firstData];
+
+        let offset = firstData.length;
+        while (offset < total) {
+          const nextParams = new URLSearchParams(baseParams);
+          nextParams.set('limit', String(FEED_PAGE_LIMIT));
+          nextParams.set('offset', String(offset));
+
+          const page = await apiRequest(`/posts/feed?${nextParams.toString()}`, {
+            signal: controller.signal,
+          });
+          const pageData = Array.isArray(page.data) ? page.data : [];
+          if (!pageData.length) break;
+
+          allItems.push(...pageData);
+          offset += pageData.length;
+        }
 
         if (!isMounted) return;
 
         startTransition(() => {
-          setFeedItems(Array.isArray(result.data) ? result.data : []);
+          setFeedItems(allItems);
           setFeedMeta({
-            total: result?.pagination?.total ?? 0,
-            archivedDuringRequest: result?.meta?.archivedDuringRequest ?? 0,
+            total,
+            archivedDuringRequest,
           });
         });
       } catch (error) {
@@ -170,13 +195,6 @@ export default function HomeFeedPage() {
       controller.abort();
     };
   }, [filters, activeSearch, refreshTick]);
-
-  const stats = {
-    total: feedMeta.total || feedItems.length,
-    pinned: feedItems.filter((item) => item.pinned).length,
-    published: feedItems.filter((item) => item.status === 'published').length,
-    tags: tags.length,
-  };
 
   function updateFilter(field, value) {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -290,24 +308,6 @@ export default function HomeFeedPage() {
 
   return (
     <div className="home-feed-page">
-      <section className="panel hero-panel">
-        <div className="hero-copy">
-          <p className="eyebrow">Home Feed</p>
-          <h2>All post types in one social-style stream</h2>
-          <p className="hero-subtext">
-            Home combines announcements, jobs, events, collaboration posts, and future modules into a single
-            unified feed from the post-service.
-          </p>
-        </div>
-
-        <div className="hero-stats" aria-label="Feed summary">
-          <article className="stat-tile"><span>Total in query</span><strong>{stats.total}</strong></article>
-          <article className="stat-tile"><span>Pinned</span><strong>{stats.pinned}</strong></article>
-          <article className="stat-tile"><span>Published</span><strong>{stats.published}</strong></article>
-          <article className="stat-tile"><span>Tags</span><strong>{stats.tags}</strong></article>
-        </div>
-      </section>
-
       {banner.message && (
         <section className={`banner banner-${banner.type === 'error' ? 'error' : 'success'}`} aria-live="polite">
           <p>{banner.message}</p>

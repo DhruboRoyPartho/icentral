@@ -551,7 +551,9 @@ app.get('/feed', ensureDb, async (req, res) => {
         const offset = parseIntInRange(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
         const includeArchived = parseBool(req.query.includeArchived, false);
         const pinnedOnly = parseBool(req.query.pinnedOnly, false);
-        const status = req.query.status;
+        const status = typeof req.query.status === 'string'
+            ? req.query.status.trim().toLowerCase()
+            : '';
         const type = req.query.type;
         const authorId = req.query.authorId || req.query.author_id;
         const tag = req.query.tag;
@@ -575,11 +577,9 @@ app.get('/feed', ensureDb, async (req, res) => {
 
         if (status && status !== 'all') {
             query = query.eq('status', status);
-        } else if (!includeArchived) {
+        } else if (!status && !includeArchived) {
             query = query.eq('status', 'published');
-        }
-
-        if (includeArchived === false && (!status || status === 'all')) {
+        } else if (status === 'all' && !includeArchived) {
             query = query.neq('status', 'archived');
         }
 
