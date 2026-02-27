@@ -91,6 +91,7 @@ export default function HomeFeedPage() {
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
+  const composerAvatar = String(user?.full_name || user?.name || user?.email || 'G').trim().charAt(0).toUpperCase() || 'G';
 
   useEffect(() => {
     let isMounted = true;
@@ -316,9 +317,28 @@ export default function HomeFeedPage() {
             </div>
           )}
 
-          <form className="stacked-form" onSubmit={handleCreatePost}>
-            <div className="field-row two-col">
-              <label>
+          <form className="composer-horizontal-form" onSubmit={handleCreatePost}>
+            <div className="composer-quick-row">
+              <span className="composer-avatar-badge" aria-hidden="true">{composerAvatar}</span>
+
+              <label className="sr-only" htmlFor="new-post-summary">Summary</label>
+              <input
+                id="new-post-summary"
+                className="composer-summary-input"
+                type="text"
+                placeholder={isAuthenticated ? "What's on your mind?" : 'Sign in to write a post summary'}
+                value={postForm.summary}
+                onChange={(e) => updatePostField('summary', e.target.value)}
+                disabled={!isAuthenticated}
+              />
+
+              <button className="btn btn-primary-solid composer-submit-btn" type="submit" disabled={submittingPost || !isAuthenticated}>
+                {submittingPost ? 'Creating...' : 'Create Post'}
+              </button>
+            </div>
+
+            <div className="composer-details-row">
+              <label className="composer-field field-type">
                 <span>Type</span>
                 <select value={postForm.type} onChange={(e) => updatePostField('type', e.target.value)} disabled={!isAuthenticated}>
                   <option value="ANNOUNCEMENT">Announcement</option>
@@ -329,7 +349,8 @@ export default function HomeFeedPage() {
                   <option value="COLLAB">Collaboration</option>
                 </select>
               </label>
-              <label>
+
+              <label className="composer-field field-status">
                 <span>Status</span>
                 <select value={postForm.status} onChange={(e) => updatePostField('status', e.target.value)} disabled={!isAuthenticated}>
                   <option value="published">Published</option>
@@ -337,43 +358,31 @@ export default function HomeFeedPage() {
                   <option value="archived">Archived</option>
                 </select>
               </label>
-            </div>
 
-            <label>
-              <span>Title</span>
-              <input
-                type="text"
-                placeholder="Optional headline"
-                value={postForm.title}
-                onChange={(e) => updatePostField('title', e.target.value)}
-                disabled={!isAuthenticated}
-              />
-            </label>
-
-            <label>
-              <span>Summary</span>
-              <textarea
-                rows={4}
-                placeholder="What should appear in the feed?"
-                value={postForm.summary}
-                onChange={(e) => updatePostField('summary', e.target.value)}
-                disabled={!isAuthenticated}
-              />
-            </label>
-
-            <div className="field-row two-col">
-              <label>
-                <span>Tags (existing, comma separated)</span>
+              <label className="composer-field field-title">
+                <span>Title</span>
                 <input
                   type="text"
-                  placeholder="Use existing tag names or slugs"
+                  placeholder="Optional headline"
+                  value={postForm.title}
+                  onChange={(e) => updatePostField('title', e.target.value)}
+                  disabled={!isAuthenticated}
+                />
+              </label>
+
+              <label className="composer-field field-tags">
+                <span>Tags</span>
+                <input
+                  type="text"
+                  placeholder="Existing names/slugs"
                   value={postForm.tagsCsv}
                   onChange={(e) => updatePostField('tagsCsv', e.target.value)}
                   disabled={!isAuthenticated}
                 />
               </label>
-              <label>
-                <span>Expires At</span>
+
+              <label className="composer-field field-expires">
+                <span>Expires</span>
                 <input
                   type="datetime-local"
                   value={postForm.expiresAt}
@@ -382,20 +391,6 @@ export default function HomeFeedPage() {
                 />
               </label>
             </div>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={postForm.pinned}
-                onChange={(e) => updatePostField('pinned', e.target.checked)}
-                disabled={!isAuthenticated}
-              />
-              <span>Pin immediately</span>
-            </label>
-
-            <button className="btn btn-primary-solid" type="submit" disabled={submittingPost || !isAuthenticated}>
-              {submittingPost ? 'Creating...' : 'Create Post'}
-            </button>
           </form>
         </section>
 
@@ -518,14 +513,16 @@ export default function HomeFeedPage() {
                 </div>
 
                 <div className="feed-card-actions social-actions">
-                  <button
-                    className="btn btn-soft"
-                    type="button"
-                    disabled={actionBusyPostId === item.id || !isAuthenticated}
-                    onClick={() => patchPost(item.id, { pinned: !item.pinned }, item.pinned ? 'Post unpinned.' : 'Post pinned.')}
-                  >
-                    {item.pinned ? 'Unpin' : 'Pin'}
-                  </button>
+                  {isModerator && (
+                    <button
+                      className="btn btn-soft"
+                      type="button"
+                      disabled={actionBusyPostId === item.id || !isAuthenticated}
+                      onClick={() => patchPost(item.id, { pinned: !item.pinned }, item.pinned ? 'Post unpinned.' : 'Post pinned.')}
+                    >
+                      {item.pinned ? 'Unpin' : 'Pin'}
+                    </button>
+                  )}
                   <button
                     className="btn btn-soft"
                     type="button"
