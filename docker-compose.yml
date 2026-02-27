@@ -40,6 +40,7 @@ services:
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - POST_SERVICE_SCHEMA=${POST_SERVICE_SCHEMA}
+      - JWT_SECRET=${JWT_SECRET:-HelloWorldKey}
 
   # 5. Job Service
   job-service:

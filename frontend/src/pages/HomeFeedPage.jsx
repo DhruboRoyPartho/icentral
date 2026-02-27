@@ -23,9 +23,11 @@ const initialFilters = {
 const FEED_PAGE_LIMIT = 10;
 
 async function apiRequest(path, options = {}) {
+  const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
       ...(options.headers || {}),
     },
     ...options,
@@ -187,6 +189,16 @@ export default function HomeFeedPage() {
     setPostForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  function isPostOwner(post) {
+    if (!post?.authorId || !user?.id) return false;
+    return String(post.authorId) === String(user.id);
+  }
+
+  function canUpdatePostExpiry(post) {
+    if (!isAuthenticated) return false;
+    return isModerator || isPostOwner(post);
+  }
+
   function addTagToComposer(tagId) {
     updatePostField('tagIds', [...new Set([...composerSelectedTagIds, String(tagId)])]);
     setTagSearchInput('');
@@ -306,10 +318,18 @@ export default function HomeFeedPage() {
     }
   }
 
-  async function patchPost(postId, payload, successMessage) {
+  async function patchPost(postId, payload, successMessage, options = {}) {
     if (!isAuthenticated) {
       setBanner({ type: 'error', message: 'Sign in to update posts.' });
       return;
+    }
+
+    if (options.enforceExpiryPermission) {
+      const targetPost = options.post || feedItems.find((item) => item.id === postId);
+      if (!canUpdatePostExpiry(targetPost)) {
+        setBanner({ type: 'error', message: 'Only moderators and the original author can update expiry.' });
+        return;
+      }
     }
 
     setActionBusyPostId(postId);
@@ -658,8 +678,13 @@ export default function HomeFeedPage() {
                   <button
                     className="btn btn-soft"
                     type="button"
-                    disabled={actionBusyPostId === item.id || !isAuthenticated || item.status === 'archived'}
-                    onClick={() => patchPost(item.id, { expiresAt: toLocalDateTimeInput(new Date(Date.now() + 3600_000).toISOString()) }, 'Expiry updated (+1 hour).')}
+                    disabled={actionBusyPostId === item.id || !isAuthenticated || item.status === 'archived' || !canUpdatePostExpiry(item)}
+                    onClick={() => patchPost(
+                      item.id,
+                      { expiresAt: toLocalDateTimeInput(new Date(Date.now() + 3600_000).toISOString()) },
+                      'Expiry updated (+1 hour).',
+                      { enforceExpiryPermission: true, post: item },
+                    )}
                   >
                     Set +1h Expiry
                   </button>
