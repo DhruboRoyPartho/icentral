@@ -20,7 +20,7 @@ const initialFilters = {
   tag: '',
   pinnedOnly: false,
 };
-const FEED_PAGE_LIMIT = 100;
+const FEED_PAGE_LIMIT = 10;
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -152,33 +152,15 @@ export default function HomeFeedPage() {
         params.set('limit', String(FEED_PAGE_LIMIT));
         params.set('offset', '0');
 
-        const firstPage = await apiRequest(`/posts/feed?${params.toString()}`, {
+        const result = await apiRequest(`/posts/feed?${params.toString()}`, {
           signal: controller.signal,
         });
-        const firstData = Array.isArray(firstPage.data) ? firstPage.data : [];
-        const total = firstPage?.pagination?.total ?? firstData.length;
-        const allItems = [...firstData];
-
-        let offset = firstData.length;
-        while (offset < total) {
-          const nextParams = new URLSearchParams(baseParams);
-          nextParams.set('limit', String(FEED_PAGE_LIMIT));
-          nextParams.set('offset', String(offset));
-
-          const page = await apiRequest(`/posts/feed?${nextParams.toString()}`, {
-            signal: controller.signal,
-          });
-          const pageData = Array.isArray(page.data) ? page.data : [];
-          if (!pageData.length) break;
-
-          allItems.push(...pageData);
-          offset += pageData.length;
-        }
+        const items = Array.isArray(result.data) ? result.data : [];
 
         if (!isMounted) return;
 
         startTransition(() => {
-          setFeedItems(allItems);
+          setFeedItems(items);
         });
       } catch (error) {
         if (!isMounted || error.name === 'AbortError') return;
