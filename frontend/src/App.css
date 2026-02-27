@@ -672,6 +672,63 @@
   min-width: 128px;
 }
 
+.composer-action-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-image-input {
+  display: none;
+}
+
+.composer-image-btn {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  padding: 0;
+  border-radius: 12px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.composer-image-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.composer-image-preview {
+  border-radius: 14px;
+  border: 1px solid rgba(176, 226, 255, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.composer-image-preview img {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(176, 226, 255, 0.12);
+}
+
+.composer-image-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.composer-image-meta p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
 .composer-details-row {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1093,6 +1150,25 @@
   line-height: 1.45;
 }
 
+.feed-image-wrap {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(176, 226, 255, 0.13);
+  background: rgba(4, 13, 20, 0.92);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.feed-image-wrap img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 460px;
+  object-fit: contain;
+  display: block;
+}
+
 .mini-tag-row {
   list-style: none;
   margin: 0;
@@ -1125,17 +1201,6 @@
 
 .social-actions .btn {
   flex: 1 1 140px;
-}
-
-.ref-box {
-  border-top: 1px solid rgba(176, 226, 255, 0.08);
-  padding-top: 8px;
-}
-
-.ref-box ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  color: #c8dde8;
 }
 
 .empty-state {
@@ -1386,8 +1451,12 @@
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .composer-submit-btn {
+  .composer-action-row {
     grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .composer-submit-btn {
     width: 100%;
   }
 

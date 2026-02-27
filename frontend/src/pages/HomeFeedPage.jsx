@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useState } from 'react';
+import { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 
@@ -77,6 +77,7 @@ function toLocalDateTimeInput(isoString) {
 
 export default function HomeFeedPage() {
   const { isAuthenticated, isModerator, user } = useAuth();
+  const imageInputRef = useRef(null);
   const [feedItems, setFeedItems] = useState([]);
   const [tags, setTags] = useState([]);
   const [postForm, setPostForm] = useState(initialPostForm);
@@ -89,6 +90,7 @@ export default function HomeFeedPage() {
   const [feedError, setFeedError] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
   const [tagSearchInput, setTagSearchInput] = useState('');
+  const [composerImage, setComposerImage] = useState(null);
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
@@ -198,6 +200,56 @@ export default function HomeFeedPage() {
     setRefreshTick((prev) => prev + 1);
   }
 
+  function openImagePicker() {
+    imageInputRef.current?.click();
+  }
+
+  function clearComposerImage() {
+    setComposerImage(null);
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  }
+
+  function handleImageSelected(event) {
+    const [file] = Array.from(event.target.files || []);
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setBanner({ type: 'error', message: 'Only image files are supported.' });
+      return;
+    }
+
+    const maxBytes = 900 * 1024;
+    if (file.size > maxBytes) {
+      setBanner({ type: 'error', message: 'Image is too large. Please choose one under 900 KB.' });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl) {
+        setBanner({ type: 'error', message: 'Could not read the selected image.' });
+        return;
+      }
+
+      const entityId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `img-${Date.now()}`;
+
+      setComposerImage({
+        dataUrl,
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        entityId,
+      });
+    };
+    reader.onerror = () => {
+      setBanner({ type: 'error', message: 'Failed to load selected image.' });
+    };
+    reader.readAsDataURL(file);
+  }
+
   async function handleCreatePost(event) {
     event.preventDefault();
     if (!isAuthenticated) {
@@ -220,6 +272,18 @@ export default function HomeFeedPage() {
       pinned: postForm.pinned,
       tags: [...new Set(composerSelectedTagIds)],
       expiresAt: postForm.expiresAt || null,
+      ...(composerImage ? {
+        ref: {
+          service: 'image-upload',
+          entityId: composerImage.entityId,
+          metadata: {
+            imageDataUrl: composerImage.dataUrl,
+            fileName: composerImage.fileName,
+            fileType: composerImage.fileType,
+            fileSize: composerImage.fileSize,
+          },
+        },
+      } : {}),
       ...(maybeAuthorId ? { authorId: maybeAuthorId } : {}),
     };
 
@@ -232,6 +296,7 @@ export default function HomeFeedPage() {
 
       setPostForm(initialPostForm);
       setTagSearchInput('');
+      clearComposerImage();
       setBanner({ type: 'success', message: 'Post created and added to the feed.' });
       refreshFeed();
     } catch (error) {
@@ -305,10 +370,44 @@ export default function HomeFeedPage() {
                 disabled={!isAuthenticated}
               />
 
-              <button className="btn btn-primary-solid composer-submit-btn" type="submit" disabled={submittingPost || !isAuthenticated}>
-                {submittingPost ? 'Creating...' : 'Create Post'}
-              </button>
+              <div className="composer-action-row">
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="composer-image-input"
+                  onChange={handleImageSelected}
+                  disabled={!isAuthenticated}
+                />
+                <button
+                  className="btn btn-soft composer-image-btn"
+                  type="button"
+                  onClick={openImagePicker}
+                  disabled={!isAuthenticated}
+                  aria-label="Add picture"
+                  title="Add picture"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 5h4l1.2-1.8A2 2 0 0 1 10.9 2h2.2a2 2 0 0 1 1.7 1.2L16 5h4a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm8 3.5A5.5 5.5 0 1 0 12 19a5.5 5.5 0 0 0 0-11zm0 2A3.5 3.5 0 1 1 8.5 14 3.5 3.5 0 0 1 12 10.5z" />
+                  </svg>
+                </button>
+                <button className="btn btn-primary-solid composer-submit-btn" type="submit" disabled={submittingPost || !isAuthenticated}>
+                  {submittingPost ? 'Creating...' : 'Create Post'}
+                </button>
+              </div>
             </div>
+
+            {composerImage && (
+              <div className="composer-image-preview">
+                <img src={composerImage.dataUrl} alt={composerImage.fileName || 'Selected upload'} />
+                <div className="composer-image-meta">
+                  <p>{composerImage.fileName}</p>
+                  <button type="button" className="btn btn-soft" onClick={clearComposerImage}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="composer-details-row">
               <label className="composer-field field-type">
@@ -511,6 +610,20 @@ export default function HomeFeedPage() {
                   </div>
                 </div>
 
+                {Array.isArray(item.refs) && item.refs.length > 0 && (() => {
+                  const imageRef = item.refs.find((ref) => ref?.service === 'image-upload' && ref?.metadata?.imageDataUrl);
+                  if (!imageRef) return null;
+                  return (
+                    <div className="feed-image-wrap">
+                      <img
+                        src={imageRef.metadata.imageDataUrl}
+                        alt={item.title || 'Post image'}
+                        loading="lazy"
+                      />
+                    </div>
+                  );
+                })()}
+
                 <p className="feed-summary">{item.summary || 'No summary provided.'}</p>
 
                 {Array.isArray(item.tags) && item.tags.length > 0 && (
@@ -560,18 +673,6 @@ export default function HomeFeedPage() {
                   </button>
                 </div>
 
-                {Array.isArray(item.refs) && item.refs.length > 0 && (
-                  <div className="ref-box">
-                    <p className="eyebrow">Linked module record</p>
-                    <ul>
-                      {item.refs.map((ref, refIndex) => (
-                        <li key={`${item.id}-ref-${refIndex}`}>
-                          <code>{ref.service}</code> / <code>{ref.entityId}</code>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </article>
             ))}
           </div>
