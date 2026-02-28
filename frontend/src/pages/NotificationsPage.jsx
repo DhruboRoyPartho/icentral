@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 
@@ -43,8 +43,70 @@ function formatDate(value) {
   }).format(date);
 }
 
-function toUpperStatus(value) {
-  return String(value || 'pending').toUpperCase();
+function mapAnnouncementToCard(post) {
+  return {
+    id: `announcement-${post.id}`,
+    kind: 'announcement',
+    label: 'Announcement',
+    title: post.title || 'New announcement posted',
+    message: post.summary || 'A new announcement is available in the feed.',
+    createdAt: post.createdAt || null,
+    ctaLabel: 'Open Home Feed',
+    ctaTo: '/home',
+  };
+}
+
+function mapVerificationToCard(item, isModerator) {
+  if (isModerator) {
+    return {
+      id: `verification-${item.id}`,
+      kind: 'verification',
+      label: 'Verification',
+      title: 'New approval request pending',
+      message: `${item.applicant?.fullName || 'An alumni'} submitted a verification request.`,
+      createdAt: item.createdAt || null,
+      ctaLabel: 'Review in Moderation',
+      ctaTo: '/moderation',
+    };
+  }
+
+  const normalizedStatus = String(item.status || '').toLowerCase();
+  if (normalizedStatus === 'approved') {
+    return {
+      id: `verification-${item.id}`,
+      kind: 'verification',
+      label: 'Verification',
+      title: 'Application accepted',
+      message: item.reviewNote || 'Your alumni verification has been approved.',
+      createdAt: item.reviewedAt || item.updatedAt || item.createdAt || null,
+      ctaLabel: 'Open Job Portal',
+      ctaTo: '/job-portal',
+    };
+  }
+
+  if (normalizedStatus === 'rejected') {
+    return {
+      id: `verification-${item.id}`,
+      kind: 'verification',
+      label: 'Verification',
+      title: 'Application rejected',
+      message: item.reviewNote || 'Your verification request was rejected. You can apply again.',
+      createdAt: item.reviewedAt || item.updatedAt || item.createdAt || null,
+      ctaLabel: 'Apply Again',
+      ctaTo: '/alumni-verification',
+    };
+  }
+
+  return {
+    id: `verification-${item.id}`,
+    kind: 'verification',
+    label: 'Verification',
+    title: 'Application pending',
+    message: 'Your alumni verification request is still pending review.',
+    createdAt: item.createdAt || null,
+    ctaLabel: 'View Verification',
+    ctaTo: '/alumni-verification',
+  };
 }
 
 export default function NotificationsPage() {
@@ -52,51 +114,63 @@ export default function NotificationsPage() {
   const normalizedRole = String(role || '').toLowerCase();
   const isModerator = normalizedRole === 'admin' || normalizedRole === 'faculty';
   const isAlumni = normalizedRole === 'alumni';
-  const [statusFilter, setStatusFilter] = useState(isModerator ? 'pending' : 'all');
-  const [items, setItems] = useState([]);
+  const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
-  const [canReview, setCanReview] = useState(false);
   const [banner, setBanner] = useState({ type: 'idle', message: '' });
-
-  useEffect(() => {
-    setStatusFilter(isModerator ? 'pending' : 'all');
-  }, [isModerator]);
 
   useEffect(() => {
     const controller = new AbortController();
     let isMounted = true;
 
     async function loadNotifications() {
-      if (!isAuthenticated) {
-        setItems([]);
-        setLoading(false);
-        setCanReview(false);
-        return;
-      }
-
       setLoading(true);
+      setBanner({ type: 'idle', message: '' });
+
+      const allCards = [];
+      const errors = [];
+
+      const announcementQuery = '/posts/feed?type=ANNOUNCEMENT&status=published&limit=12&offset=0';
       try {
-        const params = new URLSearchParams();
-        params.set('status', statusFilter);
-        params.set('limit', '30');
-
-        const result = await apiRequest(`/users/notifications/alumni-verifications?${params.toString()}`, {
-          signal: controller.signal,
-        });
-        if (!isMounted) return;
-
-        startTransition(() => {
-          setItems(Array.isArray(result.data) ? result.data : []);
-          setCanReview(Boolean(result?.meta?.canReview));
-        });
+        const announcementsResult = await apiRequest(announcementQuery, { signal: controller.signal });
+        const announcements = Array.isArray(announcementsResult.data) ? announcementsResult.data : [];
+        allCards.push(...announcements.map(mapAnnouncementToCard));
       } catch (error) {
-        if (!isMounted || error.name === 'AbortError') return;
-        setBanner({ type: 'error', message: `Could not load notifications: ${error.message}` });
-      } finally {
-        if (isMounted) setLoading(false);
+        if (error.name !== 'AbortError') {
+          errors.push(`Announcements: ${error.message}`);
+        }
       }
+
+      if (isAuthenticated && (isModerator || isAlumni)) {
+        try {
+          const statusParam = isModerator ? 'pending' : 'all';
+          const verificationResult = await apiRequest(`/users/notifications/alumni-verifications?status=${statusParam}&limit=20`, {
+            signal: controller.signal,
+          });
+          const items = Array.isArray(verificationResult.data) ? verificationResult.data : [];
+          allCards.push(...items.map((item) => mapVerificationToCard(item, isModerator)));
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            errors.push(`Verification: ${error.message}`);
+          }
+        }
+      }
+
+      if (!isMounted) return;
+
+      const sorted = allCards
+        .slice()
+        .sort((a, b) => {
+          const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return bTime - aTime;
+        });
+
+      setCards(sorted);
+      if (errors.length) {
+        setBanner({ type: 'error', message: `Some notifications failed to load. ${errors.join(' | ')}` });
+      }
+      setLoading(false);
     }
 
     loadNotifications();
@@ -104,55 +178,29 @@ export default function NotificationsPage() {
       isMounted = false;
       controller.abort();
     };
-  }, [isAuthenticated, statusFilter, refreshTick]);
+  }, [isAuthenticated, isModerator, isAlumni, refreshTick]);
 
-  const pageCopy = useMemo(() => {
+  const headerCopy = useMemo(() => {
     if (isModerator) {
       return {
-        eyebrow: 'Faculty/Admin Notifications',
-        title: 'Alumni Verification Applications',
-        subtitle: 'Review alumni verification requests and take action.',
+        eyebrow: 'Notifications',
+        title: 'Admin Notification Center',
+        subtitle: 'You will see new approval requests and feed announcements here.',
       };
     }
-
     if (isAlumni) {
       return {
-        eyebrow: 'Alumni Notifications',
-        title: 'Verification Updates',
-        subtitle: 'Track your alumni verification outcomes and review feedback.',
+        eyebrow: 'Notifications',
+        title: 'Alumni Notification Center',
+        subtitle: 'You will see verification outcomes and feed announcements here.',
       };
     }
-
     return {
       eyebrow: 'Notifications',
-      title: 'Role-based Inbox',
-      subtitle: 'Notifications are curated by account type.',
+      title: 'Notification Center',
+      subtitle: 'Announcements and account-relevant updates appear here.',
     };
   }, [isAlumni, isModerator]);
-
-  async function reviewApplication(id, action) {
-    if (!canReview) return;
-    setBusyId(id);
-    try {
-      const reviewNote = action === 'reject'
-        ? window.prompt('Optional rejection note:', '') || ''
-        : '';
-
-      await apiRequest(`/users/notifications/alumni-verifications/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          action,
-          reviewNote: reviewNote.trim() || null,
-        }),
-      });
-      setBanner({ type: 'success', message: `Application ${action === 'approve' ? 'approved' : 'rejected'}.` });
-      setRefreshTick((prev) => prev + 1);
-    } catch (error) {
-      setBanner({ type: 'error', message: `Could not review application: ${error.message}` });
-    } finally {
-      setBusyId(null);
-    }
-  }
 
   return (
     <div className="moderation-page">
@@ -165,9 +213,9 @@ export default function NotificationsPage() {
 
       <section className="panel placeholder-panel">
         <div className="placeholder-hero">
-          <p className="eyebrow">{pageCopy.eyebrow}</p>
-          <h2>{pageCopy.title}</h2>
-          <p>{pageCopy.subtitle}</p>
+          <p className="eyebrow">{headerCopy.eyebrow}</p>
+          <h2>{headerCopy.title}</h2>
+          <p>{headerCopy.subtitle}</p>
         </div>
       </section>
 
@@ -175,133 +223,64 @@ export default function NotificationsPage() {
         <section className="panel">
           <div className="inline-alert warn-alert">
             <p>
-              Please <Link to="/login">sign in</Link> to view your notifications.
+              You are in guest mode. <Link to="/login">Sign in</Link> to receive personal account notifications.
             </p>
           </div>
         </section>
       )}
 
-      {isAuthenticated && (
-        <section className="panel feed-panel">
-          <div className="panel-header feed-header">
-            <div>
-              <p className="eyebrow">Inbox</p>
-              <h3>{isModerator ? 'Verification Requests' : 'Recent Notifications'}</h3>
-            </div>
-            <div className="header-actions">
-              <span className="pill">{loading ? 'Loading...' : `${items.length} item(s)`}</span>
-              <button className="btn btn-soft" type="button" onClick={() => setRefreshTick((prev) => prev + 1)}>
-                Refresh
-              </button>
-            </div>
+      <section className="panel feed-panel">
+        <div className="panel-header feed-header">
+          <div>
+            <p className="eyebrow">Feed</p>
+            <h3>Recent Notifications</h3>
           </div>
+          <div className="header-actions">
+            <span className="pill">{loading ? 'Loading...' : `${cards.length} notification(s)`}</span>
+            <button className="btn btn-soft" type="button" onClick={() => setRefreshTick((prev) => prev + 1)}>
+              Refresh
+            </button>
+          </div>
+        </div>
 
-          {(isModerator || isAlumni) && (
-            <form className="feed-filters" onSubmit={(event) => event.preventDefault()}>
-              <label>
-                <span>Status</span>
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                  {isModerator ? (
-                    <>
-                      <option value="pending">Pending</option>
-                      <option value="approved">Approved</option>
-                      <option value="rejected">Rejected</option>
-                      <option value="all">All</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="all">All</option>
-                      <option value="pending">Pending</option>
-                      <option value="approved">Approved</option>
-                      <option value="rejected">Rejected</option>
-                    </>
-                  )}
-                </select>
-              </label>
-            </form>
-          )}
-
-          {loading ? (
-            <div className="skeleton-grid" aria-hidden="true">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <div className="feed-card skeleton-card" key={index} />
-              ))}
-            </div>
-          ) : items.length === 0 ? (
-            <div className="empty-state">
-              <h4>No notifications found</h4>
-              <p>
-                {isModerator && 'No verification applications match the current filter.'}
-                {isAlumni && 'No verification updates are available yet.'}
-                {!isModerator && !isAlumni && 'No notifications are configured for your account type yet.'}
-              </p>
-            </div>
-          ) : (
-            <div className="feed-grid">
-              {items.map((item, index) => (
-                <article className="feed-card social-post-card" key={item.id} style={{ '--card-index': index }}>
-                  <div className="social-post-header">
-                    <div className="post-author-chip">
-                      <span className="post-avatar">{isModerator ? 'A' : 'N'}</span>
-                      <div>
-                        <strong>
-                          {isModerator
-                            ? (item.applicant?.fullName || 'Unknown applicant')
-                            : 'Alumni Verification Update'}
-                        </strong>
-                        <small>
-                          {isModerator
-                            ? (item.applicant?.email || 'No email available')
-                            : `Submitted ${formatDate(item.createdAt)}`}
-                        </small>
-                      </div>
-                    </div>
-                    <div className="pill-row">
-                      <span className="pill">{toUpperStatus(item.status)}</span>
+        {loading ? (
+          <div className="skeleton-grid" aria-hidden="true">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div className="feed-card skeleton-card" key={index} />
+            ))}
+          </div>
+        ) : cards.length === 0 ? (
+          <div className="empty-state">
+            <h4>No notifications yet</h4>
+            <p>New announcements and account updates will appear here.</p>
+          </div>
+        ) : (
+          <div className="feed-grid">
+            {cards.map((card, index) => (
+              <article className="feed-card social-post-card" key={card.id} style={{ '--card-index': index }}>
+                <div className="social-post-header">
+                  <div className="post-author-chip">
+                    <span className="post-avatar">{card.kind === 'announcement' ? 'A' : 'N'}</span>
+                    <div>
+                      <strong>{card.title}</strong>
+                      <small>{formatDate(card.createdAt)}</small>
                     </div>
                   </div>
-
-                  <div className="api-note">
-                    {isModerator && <p><strong>Applicant ID:</strong> {item.applicantId || 'N/A'}</p>}
-                    <p><strong>Student ID:</strong> {item.studentId || 'N/A'}</p>
-                    <p><strong>Current Job Info:</strong> {item.currentJobInfo || 'N/A'}</p>
-                    <p><strong>Submitted:</strong> {formatDate(item.createdAt)}</p>
-                    {item.reviewedAt && <p><strong>Reviewed:</strong> {formatDate(item.reviewedAt)}</p>}
-                    {item.reviewNote && <p><strong>Review Note:</strong> {item.reviewNote}</p>}
+                  <div className="pill-row">
+                    <span className="pill">{card.label}</span>
                   </div>
+                </div>
 
-                  {isModerator && item.idCardImageDataUrl && (
-                    <div className="feed-image-wrap">
-                      <img src={item.idCardImageDataUrl} alt={`ID card of ${item.applicant?.fullName || 'applicant'}`} loading="lazy" />
-                    </div>
-                  )}
+                <p className="feed-summary">{card.message}</p>
 
-                  {canReview && (
-                    <div className="feed-card-actions social-actions">
-                      <button
-                        className="btn btn-accent"
-                        type="button"
-                        disabled={busyId === item.id || item.status !== 'pending'}
-                        onClick={() => reviewApplication(item.id, 'approve')}
-                      >
-                        Approve
-                      </button>
-                      <button
-                        className="btn btn-danger-soft"
-                        type="button"
-                        disabled={busyId === item.id || item.status !== 'pending'}
-                        onClick={() => reviewApplication(item.id, 'reject')}
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  )}
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+                <div className="feed-card-actions social-actions">
+                  <Link className="btn btn-soft" to={card.ctaTo}>{card.ctaLabel}</Link>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
