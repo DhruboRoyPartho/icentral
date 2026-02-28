@@ -3,7 +3,7 @@ import { useAuth } from '../../context/useAuth';
 
 const FEED_SECTIONS = [
   { key: 'home', label: 'Home', to: '/home', hint: 'All posts', roles: 'all' },
-  { key: 'jobs', label: 'Job Portal', to: '/job-portal', hint: 'Job-tag posts', roles: 'all' },
+  { key: 'jobs', label: 'Job Portal', to: '/job-portal', hint: 'Job feed, alumni posting', roles: 'all' },
   { key: 'events', label: 'Events', to: '/events', hint: 'Event-tag posts', roles: 'all' },
   { key: 'collaborate', label: 'Collaborate', to: '/collaborate', hint: 'Post & invite collaborators', roles: 'all' },
   { key: 'moderation', label: 'Moderation', to: '/moderation', hint: 'Admin / Faculty only', roles: ['admin', 'faculty'] },
