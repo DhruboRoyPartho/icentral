@@ -24,3 +24,20 @@ create index if not exists idx_alumni_verification_applicant
 
 create index if not exists idx_alumni_verification_status
     on public.alumni_verification_applications (status, created_at desc);
+
+create table if not exists public.user_notification_states (
+    user_id uuid primary key references public.users(id) on delete cascade,
+    last_seen_at timestamptz,
+    updated_at timestamptz not null default now()
+);
+
+create table if not exists public.user_notification_reads (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references public.users(id) on delete cascade,
+    notification_key text not null,
+    read_at timestamptz not null default now(),
+    unique(user_id, notification_key)
+);
+
+create index if not exists idx_user_notification_reads_user_read_at
+    on public.user_notification_reads (user_id, read_at desc);

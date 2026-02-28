@@ -16,6 +16,8 @@ const CONFIG = {
     tables: {
         users: process.env.USERS_TABLE || 'users',
         alumniVerificationApplications: process.env.ALUMNI_VERIFICATION_TABLE || 'alumni_verification_applications',
+        userNotificationStates: process.env.USER_NOTIFICATION_STATE_TABLE || 'user_notification_states',
+        userNotificationReads: process.env.USER_NOTIFICATION_READS_TABLE || 'user_notification_reads',
     },
 };
 
@@ -38,6 +40,19 @@ function parseIntInRange(value, fallback, min, max) {
     const parsed = Number.parseInt(value, 10);
     if (Number.isNaN(parsed)) return fallback;
     return Math.min(Math.max(parsed, min), max);
+}
+
+function normalizeTimestamp(value) {
+    if (value === undefined || value === null || value === '') {
+        return { value: null };
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return { error: 'Invalid timestamp' };
+    }
+
+    return { value: parsed.toISOString() };
 }
 
 function formatSupabaseError(error) {
@@ -208,6 +223,12 @@ function parseApplicationInput(body = {}) {
     return { studentId, currentJobInfo, idCardImageDataUrl, errors };
 }
 
+function laterIso(a, b) {
+    if (!a) return b || null;
+    if (!b) return a || null;
+    return new Date(a).getTime() >= new Date(b).getTime() ? a : b;
+}
+
 app.get('/', (req, res) => {
     return res.json({
         health: 'User service OK',
@@ -216,6 +237,8 @@ app.get('/', (req, res) => {
             'GET /alumni-verification/me',
             'POST /alumni-verification/apply',
             'GET /notifications/alumni-verifications',
+            'GET /notifications/state',
+            'POST /notifications/state/mark-read',
             'PATCH /notifications/alumni-verifications/:id',
         ],
     });
@@ -399,6 +422,154 @@ app.get('/notifications/alumni-verifications', ensureDb, ensureAuthenticated, as
     } catch (error) {
         if (isMissingTableError(error)) {
             return verificationSchemaError(res);
+        }
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.get('/notifications/state', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const { data: stateData, error: stateError } = await supabase
+            .from(CONFIG.tables.userNotificationStates)
+            .select('user_id, last_seen_at, updated_at')
+            .eq('user_id', req.requestUser.id)
+            .maybeSingle();
+
+        if (stateError) {
+            throw stateError;
+        }
+
+        const { data: readRows, error: readError } = await supabase
+            .from(CONFIG.tables.userNotificationReads)
+            .select('notification_key, read_at')
+            .eq('user_id', req.requestUser.id)
+            .order('read_at', { ascending: false })
+            .limit(500);
+
+        if (readError) {
+            throw readError;
+        }
+
+        return res.json({
+            data: {
+                userId: req.requestUser.id,
+                lastSeenAt: stateData?.last_seen_at || null,
+                updatedAt: stateData?.updated_at || null,
+                readKeys: Array.isArray(readRows) ? readRows.map((row) => String(row.notification_key || '')).filter(Boolean) : [],
+            },
+        });
+    } catch (error) {
+        if (isMissingTableError(error) && String(error.message || '').includes(CONFIG.tables.userNotificationStates)) {
+            return res.status(500).json({
+                error: `Missing table "${CONFIG.tables.userNotificationStates}". Run services/user-service/schema.sql first.`,
+            });
+        }
+        if (isMissingTableError(error) && String(error.message || '').includes(CONFIG.tables.userNotificationReads)) {
+            return res.status(500).json({
+                error: `Missing table "${CONFIG.tables.userNotificationReads}". Run services/user-service/schema.sql first.`,
+            });
+        }
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.post('/notifications/state/mark-read', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const nowIso = new Date().toISOString();
+        const parsedTimestamp = normalizeTimestamp(req.body?.lastSeenAt);
+        const notificationKey = typeof req.body?.notificationKey === 'string'
+            ? req.body.notificationKey.trim()
+            : '';
+
+        if (parsedTimestamp.error) {
+            return res.status(400).json({ error: parsedTimestamp.error });
+        }
+        if (!notificationKey && !parsedTimestamp.value) {
+            return res.status(400).json({ error: 'Provide lastSeenAt or notificationKey' });
+        }
+
+        let finalLastSeenAt = null;
+        if (parsedTimestamp.value) {
+            const requestedLastSeen = parsedTimestamp.value || nowIso;
+
+            const { data: existingState, error: existingError } = await supabase
+                .from(CONFIG.tables.userNotificationStates)
+                .select('last_seen_at')
+                .eq('user_id', req.requestUser.id)
+                .maybeSingle();
+
+            if (existingError) {
+                throw existingError;
+            }
+
+            finalLastSeenAt = laterIso(existingState?.last_seen_at || null, requestedLastSeen);
+            const { error: stateUpsertError } = await supabase
+                .from(CONFIG.tables.userNotificationStates)
+                .upsert({
+                    user_id: req.requestUser.id,
+                    last_seen_at: finalLastSeenAt,
+                    updated_at: nowIso,
+                }, { onConflict: 'user_id' });
+
+            if (stateUpsertError) {
+                throw stateUpsertError;
+            }
+        }
+
+        if (notificationKey) {
+            const { error: readUpsertError } = await supabase
+                .from(CONFIG.tables.userNotificationReads)
+                .upsert({
+                    user_id: req.requestUser.id,
+                    notification_key: notificationKey,
+                    read_at: nowIso,
+                }, { onConflict: 'user_id,notification_key' });
+
+            if (readUpsertError) {
+                throw readUpsertError;
+            }
+        }
+
+        const { data: stateData, error: stateFetchError } = await supabase
+            .from(CONFIG.tables.userNotificationStates)
+            .select('user_id, last_seen_at, updated_at')
+            .eq('user_id', req.requestUser.id)
+            .maybeSingle();
+
+        if (stateFetchError) {
+            throw stateFetchError;
+        }
+
+        const { data: readRows, error: readRowsError } = await supabase
+            .from(CONFIG.tables.userNotificationReads)
+            .select('notification_key')
+            .eq('user_id', req.requestUser.id)
+            .order('read_at', { ascending: false })
+            .limit(500);
+
+        if (readRowsError) {
+            throw readRowsError;
+        }
+
+        return res.json({
+            message: 'Notifications marked as read.',
+            data: {
+                userId: req.requestUser.id,
+                lastSeenAt: stateData?.last_seen_at || null,
+                updatedAt: stateData?.updated_at || null,
+                readKeys: Array.isArray(readRows) ? readRows.map((row) => String(row.notification_key || '')).filter(Boolean) : [],
+            },
+        });
+    } catch (error) {
+        if (isMissingTableError(error) && String(error.message || '').includes(CONFIG.tables.userNotificationStates)) {
+            return res.status(500).json({
+                error: `Missing table "${CONFIG.tables.userNotificationStates}". Run services/user-service/schema.sql first.`,
+            });
+        }
+        if (isMissingTableError(error) && String(error.message || '').includes(CONFIG.tables.userNotificationReads)) {
+            return res.status(500).json({
+                error: `Missing table "${CONFIG.tables.userNotificationReads}". Run services/user-service/schema.sql first.`,
+            });
         }
         return res.status(500).json({ error: formatSupabaseError(error) });
     }

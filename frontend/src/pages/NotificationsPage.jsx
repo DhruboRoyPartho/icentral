@@ -47,6 +47,8 @@ function mapAnnouncementToCard(post) {
   return {
     id: `announcement-${post.id}`,
     kind: 'announcement',
+    theme: 'announcement',
+    icon: 'ANN',
     label: 'Announcement',
     title: post.title || 'New announcement posted',
     message: post.summary || 'A new announcement is available in the feed.',
@@ -61,6 +63,8 @@ function mapVerificationToCard(item, isModerator) {
     return {
       id: `verification-${item.id}`,
       kind: 'verification',
+      theme: 'pending',
+      icon: 'REQ',
       label: 'Verification',
       title: 'New approval request pending',
       message: `${item.applicant?.fullName || 'An alumni'} submitted a verification request.`,
@@ -75,6 +79,8 @@ function mapVerificationToCard(item, isModerator) {
     return {
       id: `verification-${item.id}`,
       kind: 'verification',
+      theme: 'approved',
+      icon: 'OK',
       label: 'Verification',
       title: 'Application accepted',
       message: item.reviewNote || 'Your alumni verification has been approved.',
@@ -88,6 +94,8 @@ function mapVerificationToCard(item, isModerator) {
     return {
       id: `verification-${item.id}`,
       kind: 'verification',
+      theme: 'rejected',
+      icon: 'NO',
       label: 'Verification',
       title: 'Application rejected',
       message: item.reviewNote || 'Your verification request was rejected. You can apply again.',
@@ -100,6 +108,8 @@ function mapVerificationToCard(item, isModerator) {
   return {
     id: `verification-${item.id}`,
     kind: 'verification',
+    theme: 'pending',
+    icon: 'PEN',
     label: 'Verification',
     title: 'Application pending',
     message: 'Your alumni verification request is still pending review.',
@@ -116,6 +126,8 @@ export default function NotificationsPage() {
   const isAlumni = normalizedRole === 'alumni';
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [markingRead, setMarkingRead] = useState(false);
+  const [busyCardId, setBusyCardId] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
   const [banner, setBanner] = useState({ type: 'idle', message: '' });
 
@@ -129,6 +141,22 @@ export default function NotificationsPage() {
 
       const allCards = [];
       const errors = [];
+      let lastSeenAt = null;
+      let readKeys = [];
+
+      if (isAuthenticated) {
+        try {
+          const stateResult = await apiRequest('/users/notifications/state', { signal: controller.signal });
+          lastSeenAt = stateResult?.data?.lastSeenAt || null;
+          readKeys = Array.isArray(stateResult?.data?.readKeys)
+            ? stateResult.data.readKeys.map((value) => String(value))
+            : [];
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            errors.push(`Read state: ${error.message}`);
+          }
+        }
+      }
 
       const announcementQuery = '/posts/feed?type=ANNOUNCEMENT&status=published&limit=12&offset=0';
       try {
@@ -166,7 +194,21 @@ export default function NotificationsPage() {
           return bTime - aTime;
         });
 
-      setCards(sorted);
+      const unreadOnly = (() => {
+        const readKeySet = new Set(readKeys);
+        const lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
+
+        return sorted.filter((card) => {
+          if (readKeySet.has(String(card.id))) return false;
+          if (!card.createdAt) return true;
+          const createdAtMs = new Date(card.createdAt).getTime();
+          if (Number.isNaN(createdAtMs)) return true;
+          if (Number.isNaN(lastSeenMs)) return true;
+          return createdAtMs > lastSeenMs;
+        });
+      })();
+
+      setCards(unreadOnly);
       if (errors.length) {
         setBanner({ type: 'error', message: `Some notifications failed to load. ${errors.join(' | ')}` });
       }
@@ -202,6 +244,49 @@ export default function NotificationsPage() {
     };
   }, [isAlumni, isModerator]);
 
+  async function markAllAsRead() {
+    if (!isAuthenticated || cards.length === 0) return;
+    setMarkingRead(true);
+    try {
+      const latestCardTime = cards
+        .map((card) => (card.createdAt ? new Date(card.createdAt).getTime() : 0))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .sort((a, b) => b - a)[0];
+
+      const payload = latestCardTime
+        ? { lastSeenAt: new Date(latestCardTime).toISOString() }
+        : {};
+
+      await apiRequest('/users/notifications/state/mark-read', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      setBanner({ type: 'success', message: 'All current notifications marked as read.' });
+      setRefreshTick((prev) => prev + 1);
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not mark notifications as read: ${error.message}` });
+    } finally {
+      setMarkingRead(false);
+    }
+  }
+
+  async function markSingleAsRead(cardId) {
+    if (!isAuthenticated || !cardId) return;
+    setBusyCardId(cardId);
+    try {
+      await apiRequest('/users/notifications/state/mark-read', {
+        method: 'POST',
+        body: JSON.stringify({ notificationKey: cardId }),
+      });
+      setCards((prev) => prev.filter((card) => card.id !== cardId));
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not mark notification as read: ${error.message}` });
+    } finally {
+      setBusyCardId('');
+    }
+  }
+
   return (
     <div className="moderation-page">
       {banner.message && (
@@ -236,7 +321,17 @@ export default function NotificationsPage() {
             <h3>Recent Notifications</h3>
           </div>
           <div className="header-actions">
-            <span className="pill">{loading ? 'Loading...' : `${cards.length} notification(s)`}</span>
+            <span className="pill">{loading ? 'Loading...' : `${cards.length} unread`}</span>
+            {isAuthenticated && (
+              <button
+                className="btn btn-accent"
+                type="button"
+                onClick={markAllAsRead}
+                disabled={markingRead || cards.length === 0 || loading}
+              >
+                {markingRead ? 'Marking...' : 'Mark All Read'}
+              </button>
+            )}
             <button className="btn btn-soft" type="button" onClick={() => setRefreshTick((prev) => prev + 1)}>
               Refresh
             </button>
@@ -251,30 +346,47 @@ export default function NotificationsPage() {
           </div>
         ) : cards.length === 0 ? (
           <div className="empty-state">
-            <h4>No notifications yet</h4>
-            <p>New announcements and account updates will appear here.</p>
+            <h4>No unread notifications</h4>
+            <p>When new updates arrive, unread cards will appear here.</p>
           </div>
         ) : (
           <div className="feed-grid">
             {cards.map((card, index) => (
-              <article className="feed-card social-post-card" key={card.id} style={{ '--card-index': index }}>
-                <div className="social-post-header">
-                  <div className="post-author-chip">
-                    <span className="post-avatar">{card.kind === 'announcement' ? 'A' : 'N'}</span>
-                    <div>
-                      <strong>{card.title}</strong>
-                      <small>{formatDate(card.createdAt)}</small>
+              <article
+                className={`feed-card notification-card is-${card.theme || 'neutral'}`}
+                key={card.id}
+                style={{ '--card-index': index }}
+              >
+                <div className="notification-card-head">
+                  <div className="notification-identity">
+                    <span className="notification-icon" aria-hidden="true">{card.icon || '🔔'}</span>
+                    <div className="notification-title-wrap">
+                      <p className="notification-kicker">{card.label}</p>
+                      <h4 className="notification-title">{card.title}</h4>
                     </div>
                   </div>
-                  <div className="pill-row">
-                    <span className="pill">{card.label}</span>
-                  </div>
+                  <span className="notification-time">{formatDate(card.createdAt)}</span>
                 </div>
 
-                <p className="feed-summary">{card.message}</p>
+                <p className="notification-message">{card.message}</p>
 
-                <div className="feed-card-actions social-actions">
-                  <Link className="btn btn-soft" to={card.ctaTo}>{card.ctaLabel}</Link>
+                <div className="notification-card-footer">
+                  <div className="notification-action-row">
+                    <Link className="btn btn-soft" to={card.ctaTo}>{card.ctaLabel}</Link>
+                    {isAuthenticated && (
+                      <button
+                        className="btn btn-accent"
+                        type="button"
+                        onClick={() => markSingleAsRead(card.id)}
+                        disabled={busyCardId === card.id}
+                      >
+                        {busyCardId === card.id ? 'Marking...' : 'Mark as Read'}
+                      </button>
+                    )}
+                  </div>
+                  {isAuthenticated && (
+                    <span className="notification-read-hint">Unread</span>
+                  )}
                 </div>
               </article>
             ))}
