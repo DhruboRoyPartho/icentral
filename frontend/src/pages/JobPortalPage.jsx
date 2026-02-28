@@ -77,7 +77,7 @@ function toLocalDateTimeInput(isoString) {
 }
 
 export default function JobPortalPage() {
-  const { isAuthenticated, isModerator, user } = useAuth();
+  const { token, isAuthenticated, isModerator, user, setAuthSession } = useAuth();
   const imageInputRef = useRef(null);
   const [feedItems, setFeedItems] = useState([]);
   const [tags, setTags] = useState([]);
@@ -92,21 +92,16 @@ export default function JobPortalPage() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [tagSearchInput, setTagSearchInput] = useState('');
   const [composerImage, setComposerImage] = useState(null);
+  const [verificationStatus, setVerificationStatus] = useState('not_submitted');
+  const [loadingVerification, setLoadingVerification] = useState(false);
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isAlumni = normalizedRole === 'alumni';
-  const hasAlumniVerificationField = Boolean(user) && (
-    Object.prototype.hasOwnProperty.call(user, 'alumniVerificationStatus')
-    || Object.prototype.hasOwnProperty.call(user, 'isVerifiedAlumni')
-    || Object.prototype.hasOwnProperty.call(user, 'verified_alumni')
-  );
-  const hasApprovedAlumniVerification = user?.alumniVerificationStatus === 'approved'
-    || user?.isVerifiedAlumni === true
-    || user?.verified_alumni === true;
-  // Keep this bridge while dedicated alumni verification flow is still pending.
-  const canCreateJobPost = isAuthenticated && isAlumni && (!hasAlumniVerificationField || hasApprovedAlumniVerification);
+  const fallbackStatus = String(user?.alumniVerificationStatus || '').toLowerCase();
+  const effectiveVerificationStatus = verificationStatus || fallbackStatus || 'not_submitted';
+  const canCreateJobPost = isAuthenticated && isAlumni && effectiveVerificationStatus === 'approved';
   const composerAvatar = String(user?.full_name || user?.name || user?.email || 'G').trim().charAt(0).toUpperCase() || 'G';
   const composerSelectedTagIds = Array.isArray(postForm.tagIds)
     ? postForm.tagIds.map((value) => String(value)).filter(Boolean)
@@ -145,6 +140,49 @@ export default function JobPortalPage() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadMyVerificationStatus() {
+      if (!isAuthenticated || !isAlumni) {
+        if (!isMounted) return;
+        setVerificationStatus('not_submitted');
+        return;
+      }
+
+      setLoadingVerification(true);
+      try {
+        const result = await apiRequest('/users/alumni-verification/me');
+        if (!isMounted) return;
+
+        const status = String(result?.data?.status || 'not_submitted').toLowerCase();
+        setVerificationStatus(status);
+
+        if (token && user) {
+          setAuthSession({
+            token,
+            user: {
+              ...user,
+              alumniVerificationStatus: status,
+              isVerifiedAlumni: status === 'approved',
+            },
+          });
+        }
+      } catch {
+        if (!isMounted) return;
+        setVerificationStatus(fallbackStatus || 'not_submitted');
+      } finally {
+        if (isMounted) setLoadingVerification(false);
+      }
+    }
+
+    loadMyVerificationStatus();
+    return () => {
+      isMounted = false;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, isAlumni]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -285,9 +323,11 @@ export default function JobPortalPage() {
     if (!canCreateJobPost) {
       setBanner({
         type: 'error',
-        message: isAlumni
-          ? 'Your alumni account is not verified yet for job posting.'
-          : 'Only alumni can post in the Job Portal.',
+        message: !isAlumni
+          ? 'Only alumni can post in the Job Portal.'
+          : effectiveVerificationStatus === 'pending'
+            ? 'Your alumni verification is still pending review.'
+            : 'Only verified alumni can post in the Job Portal.',
       });
       return;
     }
@@ -400,9 +440,20 @@ export default function JobPortalPage() {
           {isAuthenticated && !canCreateJobPost && (
             <div className="inline-alert warn-alert">
               <p>
-                {isAlumni
-                  ? 'Your alumni verification is pending. Faculty/Admin approval will unlock job posting.'
-                  : 'Only user type alumni can create job posts in this section.'}
+                {!isAlumni && 'Only user type alumni can create job posts in this section.'}
+                {isAlumni && loadingVerification && 'Checking your alumni verification status...'}
+                {isAlumni && !loadingVerification && effectiveVerificationStatus === 'pending' && (
+                  <>
+                    Your alumni verification is pending. Faculty/Admin approval will unlock job posting.
+                  </>
+                )}
+                {isAlumni && !loadingVerification && (effectiveVerificationStatus === 'not_submitted' || effectiveVerificationStatus === 'rejected') && (
+                  <>
+                    You need verified alumni status to post jobs.
+                    {' '}
+                    <Link to="/alumni-verification">Apply for verification</Link>.
+                  </>
+                )}
               </p>
             </div>
           )}
@@ -416,7 +467,7 @@ export default function JobPortalPage() {
                 id="new-post-summary"
                 className="composer-summary-input"
                 type="text"
-                placeholder={canCreateJobPost ? 'Share a job opportunity' : 'Alumni account required to post jobs'}
+                placeholder={canCreateJobPost ? 'Share a job opportunity' : 'Verified alumni account required to post jobs'}
                 value={postForm.summary}
                 onChange={(e) => updatePostField('summary', e.target.value)}
                 disabled={!canCreateJobPost}

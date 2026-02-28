@@ -6,7 +6,9 @@ import Login from './components/Login';
 import Signup from './components/Signup';
 import HomeFeedPage from './pages/HomeFeedPage';
 import JobPortalPage from './pages/JobPortalPage';
+import AlumniVerificationPage from './pages/AlumniVerificationPage';
 import ModerationPage from './pages/ModerationPage';
+import NotificationsPage from './pages/NotificationsPage';
 import SectionPlaceholderPage from './pages/SectionPlaceholderPage';
 
 function App() {
@@ -20,6 +22,8 @@ function App() {
           <Route path="/" element={<Navigate to="/home" replace />} />
           <Route path="/home" element={<HomeFeedPage />} />
           <Route path="/job-portal" element={<JobPortalPage />} />
+          <Route path="/alumni-verification" element={<AlumniVerificationPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
           <Route
             path="/events"
             element={

@@ -4,6 +4,7 @@ import { useAuth } from '../../context/useAuth';
 const FEED_SECTIONS = [
   { key: 'home', label: 'Home', to: '/home', hint: 'All posts', roles: 'all' },
   { key: 'jobs', label: 'Job Portal', to: '/job-portal', hint: 'Job feed, alumni posting', roles: 'all' },
+  { key: 'notifications', label: 'Notifications', to: '/notifications', hint: 'Role-based inbox', roles: 'all' },
   { key: 'events', label: 'Events', to: '/events', hint: 'Event-tag posts', roles: 'all' },
   { key: 'collaborate', label: 'Collaborate', to: '/collaborate', hint: 'Post & invite collaborators', roles: 'all' },
   { key: 'moderation', label: 'Moderation', to: '/moderation', hint: 'Admin / Faculty only', roles: ['admin', 'faculty'] },
@@ -67,7 +68,12 @@ export default function AppShell() {
         </div>
 
         <div className="social-topbar-actions">
-          <button type="button" className="icon-btn" aria-label="Notifications">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Notifications"
+            onClick={() => navigate('/notifications')}
+          >
             <span aria-hidden="true">Notifications</span>
             <span className="notif-dot" />
           </button>

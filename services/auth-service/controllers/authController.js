@@ -11,6 +11,40 @@ const supabase = createClient(
 );
 
 const JWT_SECRET = process.env.JWT_SECRET || 'HelloWorldKey';
+const ALUMNI_VERIFICATION_TABLE = process.env.ALUMNI_VERIFICATION_TABLE || 'alumni_verification_applications';
+
+function isMissingTableError(error) {
+    return error?.code === '42P01';
+}
+
+function resolveVerificationStatus(rows) {
+    const applications = Array.isArray(rows) ? rows : [];
+    if (applications.some((item) => item.status === 'approved')) return 'approved';
+    if (applications.some((item) => item.status === 'pending')) return 'pending';
+    if (applications.some((item) => item.status === 'rejected')) return 'rejected';
+    return 'not_submitted';
+}
+
+async function getAlumniVerificationStatus(userId, role) {
+    if (String(role || '').toLowerCase() !== 'alumni') {
+        return null;
+    }
+
+    const { data, error } = await supabase
+        .from(ALUMNI_VERIFICATION_TABLE)
+        .select('status, created_at')
+        .eq('applicant_id', userId)
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        if (isMissingTableError(error)) {
+            return 'not_submitted';
+        }
+        throw error;
+    }
+
+    return resolveVerificationStatus(data || []);
+}
 
 async function signup(req, res) {
     const {university_id, full_name, session, email, phone_number, role, password} = req.body;
@@ -35,7 +69,17 @@ async function signup(req, res) {
 
         if (error) throw error;
 
-        res.status(201).json({success: true, message: 'Registration successful', user: data});
+        const verificationStatus = await getAlumniVerificationStatus(data.id, data.role);
+
+        res.status(201).json({
+            success: true,
+            message: 'Registration successful',
+            user: {
+                ...data,
+                alumniVerificationStatus: verificationStatus,
+                isVerifiedAlumni: verificationStatus === 'approved',
+            },
+        });
     } catch (err) {
         console.error(err);
         res.status(400).json({success: false, message: 'Registration failed, Email or ID might be already exists'});
@@ -71,10 +115,19 @@ async function login(req, res) {
             { expiresIn: '24h' }
         );
 
+        const verificationStatus = await getAlumniVerificationStatus(user.id, user.role);
+
         res.status(200).json({
             success: true,
             token,
-            user: {id: user.id, email: user.email, role: user.role, full_name: user.full_name}
+            user: {
+                id: user.id,
+                email: user.email,
+                role: user.role,
+                full_name: user.full_name,
+                alumniVerificationStatus: verificationStatus,
+                isVerifiedAlumni: verificationStatus === 'approved',
+            },
         });
     } catch (err) {
         console.error(err);

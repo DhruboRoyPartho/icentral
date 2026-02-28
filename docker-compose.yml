@@ -31,6 +31,10 @@ services:
     build: ./services/user-service
     environment:
       - PORT=3001
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - USER_SERVICE_SCHEMA=${USER_SERVICE_SCHEMA:-public}
+      - JWT_SECRET=${JWT_SECRET:-HelloWorldKey}
 
   # 4. Post Service
   post-service:
