@@ -6,6 +6,8 @@ import Login from './components/Login';
 import Signup from './components/Signup';
 import HomeFeedPage from './pages/HomeFeedPage';
 import JobPortalPage from './pages/JobPortalPage';
+import JobApplicationPage from './pages/JobApplicationPage';
+import JobApplicationsPage from './pages/JobApplicationsPage';
 import AlumniVerificationPage from './pages/AlumniVerificationPage';
 import ModerationPage from './pages/ModerationPage';
 import NotificationsPage from './pages/NotificationsPage';
@@ -22,6 +24,8 @@ function App() {
           <Route path="/" element={<Navigate to="/home" replace />} />
           <Route path="/home" element={<HomeFeedPage />} />
           <Route path="/job-portal" element={<JobPortalPage />} />
+          <Route path="/job-portal/:postId/apply" element={<JobApplicationPage />} />
+          <Route path="/job-portal/:postId/applications" element={<JobApplicationsPage />} />
           <Route path="/alumni-verification" element={<AlumniVerificationPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route

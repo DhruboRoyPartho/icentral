@@ -1287,6 +1287,43 @@
   line-height: 1.45;
 }
 
+.job-post-card {
+  gap: 12px;
+}
+
+.job-apply-post-summary {
+  border: 1px solid rgba(176, 226, 255, 0.15);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.job-apply-post-summary h3 {
+  margin: 0 0 6px;
+  color: var(--txt);
+}
+
+.job-apply-post-summary p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.job-application-details {
+  display: grid;
+  gap: 8px;
+}
+
+.job-application-details p {
+  margin: 0;
+  color: #c8dde8;
+}
+
+.inline-link {
+  color: #a3fff0;
+  text-decoration: underline;
+}
+
 .feed-image-wrap {
   border-radius: 14px;
   overflow: hidden;

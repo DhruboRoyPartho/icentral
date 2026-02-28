@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import {
+  getUnreadJobApplicationNotificationsForUser,
+  markAllJobApplicationNotificationsReadForUser,
+  markJobApplicationNotificationRead,
+} from '../utils/jobPortalStorage';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -119,8 +124,28 @@ function mapVerificationToCard(item, isModerator) {
   };
 }
 
+function mapJobApplicationNotificationToCard(notification) {
+  const jobTitle = notification.jobTitle || 'your job post';
+  const companyName = notification.companyName ? ` at ${notification.companyName}` : '';
+  const applicantName = notification.applicantName || 'A student';
+
+  return {
+    id: String(notification.id),
+    source: 'job-service',
+    kind: 'job-application',
+    theme: 'pending',
+    icon: 'JOB',
+    label: 'Job Application',
+    title: 'New job application received',
+    message: `${applicantName} applied for ${jobTitle}${companyName}.`,
+    createdAt: notification.createdAt || null,
+    ctaLabel: 'Open Job Portal',
+    ctaTo: '/job-portal',
+  };
+}
+
 export default function NotificationsPage() {
-  const { isAuthenticated, role } = useAuth();
+  const { isAuthenticated, role, user } = useAuth();
   const normalizedRole = String(role || '').toLowerCase();
   const isModerator = normalizedRole === 'admin' || normalizedRole === 'faculty';
   const isAlumni = normalizedRole === 'alumni';
@@ -184,6 +209,17 @@ export default function NotificationsPage() {
         }
       }
 
+      if (isAuthenticated && user?.id) {
+        try {
+          const jobNotifications = await getUnreadJobApplicationNotificationsForUser(user.id, { signal: controller.signal });
+          allCards.push(...jobNotifications.map(mapJobApplicationNotificationToCard));
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            errors.push(`Job applications: ${error.message}`);
+          }
+        }
+      }
+
       if (!isMounted) return;
 
       const sorted = allCards
@@ -199,6 +235,7 @@ export default function NotificationsPage() {
         const lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
 
         return sorted.filter((card) => {
+          if (card.source === 'job-service') return true;
           if (readKeySet.has(String(card.id))) return false;
           if (!card.createdAt) return true;
           const createdAtMs = new Date(card.createdAt).getTime();
@@ -220,7 +257,7 @@ export default function NotificationsPage() {
       isMounted = false;
       controller.abort();
     };
-  }, [isAuthenticated, isModerator, isAlumni, refreshTick]);
+  }, [isAuthenticated, isModerator, isAlumni, user?.id, refreshTick]);
 
   const headerCopy = useMemo(() => {
     if (isModerator) {
@@ -234,7 +271,7 @@ export default function NotificationsPage() {
       return {
         eyebrow: 'Notifications',
         title: 'Alumni Notification Center',
-        subtitle: 'You will see verification outcomes and feed announcements here.',
+        subtitle: 'You will see verification outcomes, feed announcements, and job applications here.',
       };
     }
     return {
@@ -246,21 +283,31 @@ export default function NotificationsPage() {
 
   async function markAllAsRead() {
     if (!isAuthenticated || cards.length === 0) return;
+
+    const localCards = cards.filter((card) => card.source === 'job-service');
+    const apiCards = cards.filter((card) => card.source !== 'job-service');
+
     setMarkingRead(true);
     try {
-      const latestCardTime = cards
-        .map((card) => (card.createdAt ? new Date(card.createdAt).getTime() : 0))
-        .filter((value) => Number.isFinite(value) && value > 0)
-        .sort((a, b) => b - a)[0];
+      if (localCards.length > 0 && user?.id) {
+        await markAllJobApplicationNotificationsReadForUser(user.id);
+      }
 
-      const payload = latestCardTime
-        ? { lastSeenAt: new Date(latestCardTime).toISOString() }
-        : {};
+      if (apiCards.length > 0) {
+        const latestCardTime = apiCards
+          .map((card) => (card.createdAt ? new Date(card.createdAt).getTime() : 0))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .sort((a, b) => b - a)[0];
 
-      await apiRequest('/users/notifications/state/mark-read', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
+        const payload = latestCardTime
+          ? { lastSeenAt: new Date(latestCardTime).toISOString() }
+          : {};
+
+        await apiRequest('/users/notifications/state/mark-read', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+      }
 
       setBanner({ type: 'success', message: 'All current notifications marked as read.' });
       setRefreshTick((prev) => prev + 1);
@@ -275,6 +322,13 @@ export default function NotificationsPage() {
     if (!isAuthenticated || !cardId) return;
     setBusyCardId(cardId);
     try {
+      const targetCard = cards.find((card) => card.id === cardId);
+      if (targetCard?.source === 'job-service') {
+        await markJobApplicationNotificationRead(cardId);
+        setCards((prev) => prev.filter((card) => card.id !== cardId));
+        return;
+      }
+
       await apiRequest('/users/notifications/state/mark-read', {
         method: 'POST',
         body: JSON.stringify({ notificationKey: cardId }),
