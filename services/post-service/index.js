@@ -16,6 +16,7 @@ const CONFIG = {
         tags: process.env.TAGS_TABLE || 'tags',
         postTags: process.env.POST_TAGS_TABLE || 'post_tags',
         postRefs: process.env.POST_REFS_TABLE || 'post_refs',
+        alumniVerificationApplications: process.env.ALUMNI_VERIFICATION_TABLE || 'alumni_verification_applications',
     },
     feedDefaultLimit: Number(process.env.POST_FEED_DEFAULT_LIMIT) || 20,
     feedMaxLimit: Number(process.env.POST_FEED_MAX_LIMIT) || 100,
@@ -148,6 +149,40 @@ function getRequestUser(req) {
 function isModeratorRole(role) {
     const normalized = String(role || '').toLowerCase();
     return normalized === 'admin' || normalized === 'faculty';
+}
+
+function isAlumniRole(role) {
+    return String(role || '').toLowerCase() === 'alumni';
+}
+
+function canCreateAnnouncement(role) {
+    return isModeratorRole(role);
+}
+
+function canCreateJobAsBypassRole(role) {
+    return isModeratorRole(role);
+}
+
+function resolveVerificationStatus(rows) {
+    const applications = Array.isArray(rows) ? rows : [];
+    if (applications.some((item) => item.status === 'approved')) return 'approved';
+    if (applications.some((item) => item.status === 'pending')) return 'pending';
+    if (applications.some((item) => item.status === 'rejected')) return 'rejected';
+    return 'not_submitted';
+}
+
+async function getAlumniVerificationStatus(applicantId) {
+    const { data, error } = await supabase
+        .from(CONFIG.tables.alumniVerificationApplications)
+        .select('status, created_at')
+        .eq('applicant_id', applicantId)
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        throw error;
+    }
+
+    return resolveVerificationStatus(data || []);
 }
 
 function buildPostPayload(body, { partial = false } = {}) {
@@ -680,6 +715,54 @@ app.post('/posts', ensureDb, async (req, res) => {
         const payload = buildPostPayload(req.body);
         if (payload.errors.length) {
             return res.status(400).json({ error: 'Validation failed', details: payload.errors });
+        }
+
+        const normalizedType = String(payload.postFields.type || '').toUpperCase();
+        if (normalizedType === 'ANNOUNCEMENT' || normalizedType === 'JOB') {
+            const requestUser = getRequestUser(req);
+            if (!requestUser?.id) {
+                return res.status(401).json({
+                    error: `Authentication is required to create ${normalizedType} posts.`,
+                });
+            }
+
+            payload.postFields.author_id = requestUser.id;
+
+            if (normalizedType === 'ANNOUNCEMENT' && !canCreateAnnouncement(requestUser.role)) {
+                return res.status(403).json({
+                    error: 'Only faculty/admin can create ANNOUNCEMENT posts.',
+                });
+            }
+        }
+
+        if (normalizedType === 'JOB') {
+            const requestUser = getRequestUser(req);
+            if (canCreateJobAsBypassRole(requestUser?.role)) {
+                payload.postFields.author_id = requestUser.id;
+            } else {
+                if (!isAlumniRole(requestUser?.role)) {
+                    return res.status(403).json({
+                        error: 'Only verified alumni or faculty/admin can create JOB posts.',
+                    });
+                }
+
+                const verificationStatus = await getAlumniVerificationStatus(requestUser.id).catch((error) => {
+                    if (error?.code === '42P01') {
+                        const err = new Error(`Missing table "${CONFIG.tables.alumniVerificationApplications}". Run services/user-service/schema.sql first.`);
+                        err.status = 500;
+                        throw err;
+                    }
+                    throw error;
+                });
+
+                if (verificationStatus !== 'approved') {
+                    return res.status(403).json({
+                        error: 'Only verified alumni or faculty/admin can create JOB posts.',
+                    });
+                }
+
+                payload.postFields.author_id = requestUser.id;
+            }
         }
 
         const { data: createdPost, error: createError } = await supabase

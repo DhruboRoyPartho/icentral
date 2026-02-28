@@ -39,46 +39,31 @@ export default function Signup() {
     return (
         <div className="auth-shell">
             <div className="auth-stage auth-stage-signup">
-                <section className="panel auth-brand-panel">
+                <aside className="panel auth-brand-panel" aria-label="Registration overview">
                     <div className="auth-brand-mark" aria-hidden="true">IC</div>
                     <div className="auth-brand-copy">
-                        <p className="eyebrow">Join The Network</p>
-                        <h1>Create Your ICEntral Account</h1>
-                        <p>
-                            Register once to post, track campus updates, and collaborate with students, alumni, and faculty.
+                        <p className="eyebrow">Academic Onboarding</p>
+                        <h1 className="auth-brand-title">Create your ICEntral account</h1>
+                        <p className="auth-brand-description">
+                            Set up your profile to participate in department communication and opportunity sharing.
                         </p>
                     </div>
 
-                    <div className="auth-metric-grid" aria-label="Platform benefits">
-                        <div className="stat-tile">
-                            <span>Feed</span>
-                            <strong>Unified</strong>
-                        </div>
-                        <div className="stat-tile">
-                            <span>Access</span>
-                            <strong>Role-based</strong>
-                        </div>
-                        <div className="stat-tile">
-                            <span>Sections</span>
-                            <strong>6 routes</strong>
-                        </div>
-                        <div className="stat-tile">
-                            <span>Mode</span>
-                            <strong>Community-first</strong>
-                        </div>
-                    </div>
-                </section>
+                    <div className="auth-brand-divider" aria-hidden="true" />
 
-                <section className="panel auth-form-panel auth-form-panel-wide" aria-labelledby="signup-title">
-                    <div className="panel-header auth-panel-header">
-                        <div>
-                            <p className="eyebrow">Registration</p>
-                            <h2 id="signup-title">Create Account</h2>
-                        </div>
-                        <span className="pill pill-ghost">New member</span>
-                    </div>
+                    <ul className="auth-quick-points" aria-label="Registration guidance">
+                        <li>Use your university email for verification and updates</li>
+                        <li>Select the correct role to get relevant permissions</li>
+                        <li>Profile details can support moderation and collaboration</li>
+                    </ul>
+                </aside>
 
-                    <p className="subtitle auth-subtitle">Join the ICEntral department portal.</p>
+                <section className="panel auth-form-panel" aria-labelledby="signup-title">
+                    <div className="auth-form-head">
+                        <p className="eyebrow">Registration</p>
+                        <h2 id="signup-title">Create your account</h2>
+                        <p className="auth-subtitle">Fill in your academic profile details to join the portal.</p>
+                    </div>
 
                     <form onSubmit={handleSignup} className="stacked-form auth-form">
                         <div className="field-row two-col">
@@ -150,7 +135,7 @@ export default function Signup() {
                             />
                         </label>
 
-                        <button type="submit" className="btn btn-accent auth-submit-btn">Create Account</button>
+                        <button type="submit" className="btn btn-primary-solid auth-submit-btn">Create Account</button>
                     </form>
 
                     <p className="auth-link auth-link-themed">
@@ -161,64 +146,3 @@ export default function Signup() {
         </div>
     );
 }
-
-
-
-
-
-
-
-// import { useState } from 'react';
-// import { useNavigate, Link } from 'react-router-dom';
-
-// export default function Signup() {
-//     const navigate = useNavigate();
-//     const [formData, setFormData] = useState({
-//         university_id: '', full_name: '', session: '', email: '', phone_number: '', role: 'student', password: ''
-//     });
-
-//     const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
-
-//     const handleSignup = async (e) => {
-//         e.preventDefault();
-//         try {
-//             const response = await fetch('http://localhost:5000/auth/signup', {
-//                 method: 'POST',
-//                 headers: { 'Content-Type': 'application/json' },
-//                 body: JSON.stringify(formData)
-//             });
-//             const data = await response.json();
-            
-//             if (data.success) {
-//                 alert('Registration successful! Please login.');
-//                 navigate('/login');
-//             } else {
-//                 alert(data.message || 'Registration failed');
-//             }
-//         } catch (error) {
-//             console.error(error);
-//             alert('Server error');
-//         }
-//     };
-
-//     return (
-//         <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
-//             <h2>Create an Account</h2>
-//             <form onSubmit={handleSignup} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-//                 <input name="university_id" placeholder="ID Number" onChange={handleChange} required />
-//                 <input name="full_name" placeholder="Full Name" onChange={handleChange} required />
-//                 <input name="session" placeholder="Session (e.g., 2020-2021)" onChange={handleChange} />
-//                 <input name="email" type="email" placeholder="Email" onChange={handleChange} required />
-//                 <input name="phone_number" placeholder="Phone Number" onChange={handleChange} />
-//                 <select name="role" onChange={handleChange}>
-//                     <option value="student">Student</option>
-//                     <option value="alumni">Alumni</option>
-//                     <option value="faculty">Faculty</option>
-//                 </select>
-//                 <input name="password" type="password" placeholder="Password" onChange={handleChange} required />
-//                 <button type="submit" style={{ padding: '10px', background: '#007bff', color: 'white', border: 'none', cursor: 'pointer' }}>Sign Up</button>
-//             </form>
-//             <p>Already have an account? <Link to="/login">Login here</Link></p>
-//         </div>
-//     );
-// }

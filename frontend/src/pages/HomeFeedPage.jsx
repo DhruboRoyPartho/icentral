@@ -1,11 +1,11 @@
-import { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const initialPostForm = {
-  type: 'ANNOUNCEMENT',
+  type: 'EVENT',
   title: '',
   summary: '',
   status: 'published',
@@ -14,9 +14,41 @@ const initialPostForm = {
   expiresAt: '',
 };
 
+const postTypeOptions = [
+  { value: 'ANNOUNCEMENT', label: 'Announcement' },
+  { value: 'JOB', label: 'Job' },
+  { value: 'EVENT', label: 'Event' },
+  { value: 'EVENT_RECAP', label: 'Event Recap' },
+  { value: 'ACHIEVEMENT', label: 'Achievement' },
+  { value: 'COLLAB', label: 'Collaboration' },
+];
+
+function canRoleCreateType(role, type) {
+  const normalizedRole = String(role || '').toLowerCase();
+  const normalizedType = String(type || '').toUpperCase();
+
+  if (normalizedType === 'ANNOUNCEMENT') return normalizedRole === 'admin' || normalizedRole === 'faculty';
+  if (normalizedType === 'JOB') return normalizedRole !== 'student';
+  return true;
+}
+
+function getRoleTypeBlockMessage(role, type) {
+  const normalizedRole = String(role || '').toLowerCase();
+  const normalizedType = String(type || '').toUpperCase();
+  if (normalizedType === 'ANNOUNCEMENT') {
+    return normalizedRole === 'alumni'
+      ? 'Alumni cannot create announcement posts.'
+      : 'Students cannot create announcement posts.';
+  }
+  if (normalizedType === 'JOB') {
+    return 'Students cannot create job posts.';
+  }
+  return 'You are not allowed to create this post type.';
+}
+
 const initialFilters = {
   type: '',
-  status: 'all',
+  status: 'published',
   tag: '',
   pinnedOnly: false,
 };
@@ -96,6 +128,11 @@ export default function HomeFeedPage() {
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
+  const normalizedRole = String(user?.role || '').toLowerCase();
+  const allowedComposerTypeOptions = useMemo(
+    () => postTypeOptions.filter((option) => canRoleCreateType(normalizedRole, option.value)),
+    [normalizedRole],
+  );
   const composerAvatar = String(user?.full_name || user?.name || user?.email || 'G').trim().charAt(0).toUpperCase() || 'G';
   const composerSelectedTagIds = Array.isArray(postForm.tagIds)
     ? postForm.tagIds.map((value) => String(value)).filter(Boolean)
@@ -146,7 +183,7 @@ export default function HomeFeedPage() {
       const baseParams = new URLSearchParams();
       if (filters.type) baseParams.set('type', filters.type);
       if (filters.status) baseParams.set('status', filters.status);
-      if (filters.status === 'all') baseParams.set('includeArchived', 'true');
+      if (filters.status === 'archived') baseParams.set('includeArchived', 'true');
       if (filters.tag) baseParams.set('tag', filters.tag);
       if (filters.pinnedOnly) baseParams.set('pinnedOnly', 'true');
       if (activeSearch) baseParams.set('search', activeSearch);
@@ -180,6 +217,13 @@ export default function HomeFeedPage() {
       controller.abort();
     };
   }, [filters, activeSearch, refreshTick]);
+
+  useEffect(() => {
+    if (!allowedComposerTypeOptions.some((option) => option.value === postForm.type)) {
+      const fallbackType = allowedComposerTypeOptions[0]?.value || 'EVENT';
+      setPostForm((prev) => ({ ...prev, type: fallbackType }));
+    }
+  }, [allowedComposerTypeOptions, postForm.type]);
 
   function updateFilter(field, value) {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -271,6 +315,11 @@ export default function HomeFeedPage() {
 
     if (!postForm.type || !postForm.summary.trim()) {
       setBanner({ type: 'error', message: 'Type and summary are required to create a post.' });
+      return;
+    }
+
+    if (!canRoleCreateType(normalizedRole, postForm.type)) {
+      setBanner({ type: 'error', message: getRoleTypeBlockMessage(normalizedRole, postForm.type) });
       return;
     }
 
@@ -433,12 +482,9 @@ export default function HomeFeedPage() {
               <label className="composer-field field-type">
                 <span>Type</span>
                 <select value={postForm.type} onChange={(e) => updatePostField('type', e.target.value)} disabled={!isAuthenticated}>
-                  <option value="ANNOUNCEMENT">Announcement</option>
-                  <option value="JOB">Job</option>
-                  <option value="EVENT">Event</option>
-                  <option value="EVENT_RECAP">Event Recap</option>
-                  <option value="ACHIEVEMENT">Achievement</option>
-                  <option value="COLLAB">Collaboration</option>
+                  {allowedComposerTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </label>
 
@@ -574,7 +620,6 @@ export default function HomeFeedPage() {
               <option value="published">Published</option>
               <option value="draft">Draft</option>
               <option value="archived">Archived</option>
-              <option value="all">All</option>
             </select>
           </label>
           <label>

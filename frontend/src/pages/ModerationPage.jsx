@@ -4,9 +4,11 @@ import { useAuth } from '../context/useAuth';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 async function apiRequest(path, options = {}) {
+  const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
       ...(options.headers || {}),
     },
     ...options,
@@ -30,10 +32,15 @@ async function apiRequest(path, options = {}) {
 export default function ModerationPage() {
   const { isAuthenticated, isModerator } = useAuth();
   const [tags, setTags] = useState([]);
+  const [verificationItems, setVerificationItems] = useState([]);
   const [tagName, setTagName] = useState('');
   const [selectedTagId, setSelectedTagId] = useState('');
+  const [verificationFilter, setVerificationFilter] = useState('pending');
   const [loadingTags, setLoadingTags] = useState(true);
+  const [loadingVerification, setLoadingVerification] = useState(true);
   const [submittingTag, setSubmittingTag] = useState(false);
+  const [busyVerificationId, setBusyVerificationId] = useState(null);
+  const [refreshTick, setRefreshTick] = useState(0);
   const [banner, setBanner] = useState({ type: 'idle', message: '' });
 
   const selectedTagName = (() => {
@@ -66,6 +73,68 @@ export default function ModerationPage() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const controller = new AbortController();
+
+    async function loadVerificationRequests() {
+      if (!isModerator || !isAuthenticated) {
+        setVerificationItems([]);
+        setLoadingVerification(false);
+        return;
+      }
+
+      setLoadingVerification(true);
+      try {
+        const result = await apiRequest(`/users/notifications/alumni-verifications?status=${verificationFilter}&limit=30`, {
+          signal: controller.signal,
+        });
+        if (!isMounted) return;
+        startTransition(() => {
+          setVerificationItems(Array.isArray(result.data) ? result.data : []);
+        });
+      } catch (error) {
+        if (!isMounted || error.name === 'AbortError') return;
+        setBanner({ type: 'error', message: `Failed to load verification requests: ${error.message}` });
+      } finally {
+        if (isMounted) setLoadingVerification(false);
+      }
+    }
+
+    loadVerificationRequests();
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, [isModerator, isAuthenticated, verificationFilter, refreshTick]);
+
+  async function reviewApplication(id, action) {
+    if (!isModerator || !id) return;
+    setBusyVerificationId(id);
+    try {
+      const reviewNote = action === 'reject'
+        ? window.prompt('Optional rejection note:', '') || ''
+        : '';
+
+      await apiRequest(`/users/notifications/alumni-verifications/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          action,
+          reviewNote: reviewNote.trim() || null,
+        }),
+      });
+      setBanner({
+        type: 'success',
+        message: `Application ${action === 'approve' ? 'approved' : 'rejected'}.`,
+      });
+      setRefreshTick((prev) => prev + 1);
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not review application: ${error.message}` });
+    } finally {
+      setBusyVerificationId(null);
+    }
+  }
 
   async function handleCreateTag(event) {
     event.preventDefault();
@@ -167,6 +236,97 @@ export default function ModerationPage() {
           <p>Selected Tag Filter: <strong>{selectedTagName}</strong></p>
           <p>Role-aware actions: {isModerator ? 'Moderator controls enabled' : 'Standard controls'}</p>
         </div>
+      </section>
+
+      <section className="panel feed-panel">
+        <div className="panel-header feed-header">
+          <div>
+            <p className="eyebrow">Verification Queue</p>
+            <h3>Alumni Verification Requests</h3>
+          </div>
+          <div className="header-actions">
+            <span className="pill">{loadingVerification ? 'Loading...' : `${verificationItems.length} request(s)`}</span>
+            <button className="btn btn-soft" type="button" onClick={() => setRefreshTick((prev) => prev + 1)}>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <form className="feed-filters" onSubmit={(event) => event.preventDefault()}>
+          <label>
+            <span>Status</span>
+            <select value={verificationFilter} onChange={(event) => setVerificationFilter(event.target.value)}>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        </form>
+
+        {loadingVerification ? (
+          <div className="skeleton-grid" aria-hidden="true">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div className="feed-card skeleton-card" key={index} />
+            ))}
+          </div>
+        ) : verificationItems.length === 0 ? (
+          <div className="empty-state">
+            <h4>No verification applications</h4>
+            <p>No applications match the current status filter.</p>
+          </div>
+        ) : (
+          <div className="feed-grid">
+            {verificationItems.map((item, index) => (
+              <article className="feed-card social-post-card" key={item.id} style={{ '--card-index': index }}>
+                <div className="social-post-header">
+                  <div className="post-author-chip">
+                    <span className="post-avatar">A</span>
+                    <div>
+                      <strong>{item.applicant?.fullName || 'Unknown applicant'}</strong>
+                      <small>{item.applicant?.email || 'No email available'}</small>
+                    </div>
+                  </div>
+                  <div className="pill-row">
+                    <span className="pill">{String(item.status || 'pending').toUpperCase()}</span>
+                  </div>
+                </div>
+
+                <div className="api-note">
+                  <p><strong>Student ID:</strong> {item.studentId || 'N/A'}</p>
+                  <p><strong>Current Job Info:</strong> {item.currentJobInfo || 'N/A'}</p>
+                  <p><strong>Submitted:</strong> {item.createdAt ? new Date(item.createdAt).toLocaleString() : 'N/A'}</p>
+                  {item.reviewNote && <p><strong>Review Note:</strong> {item.reviewNote}</p>}
+                </div>
+
+                {item.idCardImageDataUrl && (
+                  <div className="feed-image-wrap">
+                    <img src={item.idCardImageDataUrl} alt={`ID card of ${item.applicant?.fullName || 'applicant'}`} loading="lazy" />
+                  </div>
+                )}
+
+                <div className="feed-card-actions social-actions">
+                  <button
+                    className="btn btn-accent"
+                    type="button"
+                    disabled={busyVerificationId === item.id || item.status !== 'pending'}
+                    onClick={() => reviewApplication(item.id, 'approve')}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    className="btn btn-danger-soft"
+                    type="button"
+                    disabled={busyVerificationId === item.id || item.status !== 'pending'}
+                    onClick={() => reviewApplication(item.id, 'reject')}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );
