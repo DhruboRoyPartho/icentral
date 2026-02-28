@@ -40,42 +40,31 @@ export default function Login() {
     return (
         <div className="auth-shell">
             <div className="auth-stage">
-                <section className="panel auth-brand-panel">
+                <aside className="panel auth-brand-panel" aria-label="Platform overview">
                     <div className="auth-brand-mark" aria-hidden="true">IC</div>
                     <div className="auth-brand-copy">
                         <p className="eyebrow">Department Community Platform</p>
-                        <h1>ICEntral</h1>
-                        <p>
-                            A shared space for announcements, events, opportunities, and collaboration across your department.
+                        <h1 className="auth-brand-title">ICEntral</h1>
+                        <p className="auth-brand-description">
+                            Professional communication space for academic notices, opportunities, and department updates.
                         </p>
                     </div>
 
-                    <ul className="auth-feature-list" aria-label="Platform highlights">
-                        <li className="auth-feature-item">
-                            <span className="pill tone-ok">Unified feed</span>
-                            <p>Keep up with posts, pinned updates, and community tags in one timeline.</p>
-                        </li>
-                        <li className="auth-feature-item">
-                            <span className="pill tone-warn">Role aware</span>
-                            <p>Faculty and admins get moderation access while students keep a focused feed view.</p>
-                        </li>
-                        <li className="auth-feature-item">
-                            <span className="pill tone-pin">Fast access</span>
-                            <p>Sign in to continue where you left off and manage posts from the main feed.</p>
-                        </li>
+                    <div className="auth-brand-divider" aria-hidden="true" />
+
+                    <ul className="auth-quick-points" aria-label="Platform highlights">
+                        <li>Official departmental announcements in one place</li>
+                        <li>Role-based access for students, alumni, and faculty</li>
+                        <li>Centralized timeline for events, jobs, and collaboration</li>
                     </ul>
-                </section>
+                </aside>
 
                 <section className="panel auth-form-panel" aria-labelledby="login-title">
-                    <div className="panel-header auth-panel-header">
-                        <div>
-                            <p className="eyebrow">Authentication</p>
-                            <h2 id="login-title">Welcome Back</h2>
-                        </div>
-                        <span className="pill pill-ghost">Sign in</span>
+                    <div className="auth-form-head">
+                        <p className="eyebrow">Authentication</p>
+                        <h2 id="login-title">Sign in to your account</h2>
+                        <p className="auth-subtitle">Use your academic email and password to continue.</p>
                     </div>
-
-                    <p className="subtitle auth-subtitle">Sign in to continue to ICEntral.</p>
 
                     <form onSubmit={handleLogin} className="stacked-form auth-form">
                         <label>
@@ -106,62 +95,10 @@ export default function Login() {
                     </form>
 
                     <p className="auth-link auth-link-themed">
-                        Don't have an account yet? <Link to="/signup">Create one</Link>
+                        New to ICEntral? <Link to="/signup">Create an account</Link>
                     </p>
                 </section>
             </div>
         </div>
     );
 }
-
-
-
-
-
-
-
-// import { useState } from 'react';
-// import { useNavigate, Link } from 'react-router-dom';
-
-// export default function Login() {
-//     const navigate = useNavigate();
-//     const [credentials, setCredentials] = useState({ email: '', password: '' });
-
-//     const handleChange = (e) => setCredentials({ ...credentials, [e.target.name]: e.target.value });
-
-//     const handleLogin = async (e) => {
-//         e.preventDefault();
-//         try {
-//             const response = await fetch('http://localhost:5000/auth/login', {
-//                 method: 'POST',
-//                 headers: { 'Content-Type': 'application/json' },
-//                 body: JSON.stringify(credentials)
-//             });
-//             const data = await response.json();
-            
-//             if (data.success) {
-//                 // Save the token and user info to the browser
-//                 localStorage.setItem('token', data.token);
-//                 localStorage.setItem('user', JSON.stringify(data.user));
-//                 navigate('/dashboard'); // Redirect to dashboard
-//             } else {
-//                 alert(data.message || 'Invalid credentials');
-//             }
-//         } catch (error) {
-//             console.error(error);
-//             alert('Server error');
-//         }
-//     };
-
-//     return (
-//         <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
-//             <h2>Welcome Back</h2>
-//             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-//                 <input name="email" type="email" placeholder="Email" onChange={handleChange} required />
-//                 <input name="password" type="password" placeholder="Password" onChange={handleChange} required />
-//                 <button type="submit" style={{ padding: '10px', background: '#28a745', color: 'white', border: 'none', cursor: 'pointer' }}>Login</button>
-//             </form>
-//             <p>Don't have an account? <Link to="/signup">Register here</Link></p>
-//         </div>
-//     );
-// }

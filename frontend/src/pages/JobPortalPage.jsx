@@ -90,6 +90,15 @@ export default function JobPortalPage() {
     });
   }, [feedItems, activeSearch]);
 
+  const uniqueCompaniesCount = useMemo(() => {
+    return new Set(feedItems.map((post) => getJobDetailsFromPost(post).companyName)).size;
+  }, [feedItems]);
+
+  const myPostsCount = useMemo(() => {
+    if (!user?.id) return 0;
+    return feedItems.filter((post) => String(post.authorId || '') === String(user.id)).length;
+  }, [feedItems, user?.id]);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -260,7 +269,7 @@ export default function JobPortalPage() {
   }
 
   return (
-    <div className="home-feed-page">
+    <div className="home-feed-page job-portal-page">
       {banner.message && (
         <section className={`banner banner-${banner.type === 'error' ? 'error' : 'success'}`} aria-live="polite">
           <p>{banner.message}</p>
@@ -268,12 +277,36 @@ export default function JobPortalPage() {
         </section>
       )}
 
-      <section className="home-composer-grid">
-        <section className="panel composer-panel">
+      <section className="panel job-portal-overview-panel">
+        <div className="job-portal-overview-head">
+          <div>
+            <p className="eyebrow">Job Portal</p>
+            <h2>Professional Opportunities Hub</h2>
+            <p>Post opportunities, review quality applicants, and maintain a trusted alumni hiring channel.</p>
+          </div>
+          <div className="job-overview-stats">
+            <div className="job-overview-stat-card">
+              <span>Open jobs</span>
+              <strong>{feedItems.length}</strong>
+            </div>
+            <div className="job-overview-stat-card">
+              <span>Companies</span>
+              <strong>{uniqueCompaniesCount}</strong>
+            </div>
+            <div className="job-overview-stat-card">
+              <span>Your posts</span>
+              <strong>{myPostsCount}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="job-portal-top-grid">
+        <section className="panel composer-panel job-composer-panel">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Create</p>
-              <h3>Post a Job</h3>
+              <h3>Post a Job Opportunity</h3>
             </div>
             <span className="pill pill-ghost">POST /posts/posts</span>
           </div>
@@ -286,6 +319,7 @@ export default function JobPortalPage() {
               </p>
             </div>
           )}
+
           {isAuthenticated && !canCreateJobPost && (
             <div className="inline-alert warn-alert">
               <p>
@@ -307,64 +341,101 @@ export default function JobPortalPage() {
             </div>
           )}
 
-          <form className="stacked-form" onSubmit={handleCreatePost}>
-            <div className="field-row two-col">
+          <form className="stacked-form job-create-form" onSubmit={handleCreatePost}>
+            <div className="job-form-block">
+              <div className="job-form-block-head">
+                <p className="eyebrow">Role Details</p>
+                <h4>Position Basics</h4>
+              </div>
+              <div className="field-row two-col">
+                <label>
+                  <span>Job Title</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. Junior Frontend Developer"
+                    value={postForm.jobTitle}
+                    onChange={(e) => updatePostField('jobTitle', e.target.value)}
+                    disabled={!canCreateJobPost}
+                  />
+                </label>
+                <label>
+                  <span>Company Name</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. TechNova Ltd."
+                    value={postForm.companyName}
+                    onChange={(e) => updatePostField('companyName', e.target.value)}
+                    disabled={!canCreateJobPost}
+                  />
+                </label>
+              </div>
               <label>
-                <span>Job Title</span>
+                <span>Salary Range</span>
                 <input
                   type="text"
-                  placeholder="e.g. Junior Frontend Developer"
-                  value={postForm.jobTitle}
-                  onChange={(e) => updatePostField('jobTitle', e.target.value)}
-                  disabled={!canCreateJobPost}
-                />
-              </label>
-              <label>
-                <span>Company Name</span>
-                <input
-                  type="text"
-                  placeholder="e.g. TechNova Ltd."
-                  value={postForm.companyName}
-                  onChange={(e) => updatePostField('companyName', e.target.value)}
+                  placeholder="e.g. $40,000 - $55,000"
+                  value={postForm.salaryRange}
+                  onChange={(e) => updatePostField('salaryRange', e.target.value)}
                   disabled={!canCreateJobPost}
                 />
               </label>
             </div>
 
-            <label>
-              <span>Job Description</span>
-              <textarea
-                rows={5}
-                placeholder="Describe role responsibilities, requirements, and application expectations"
-                value={postForm.jobDescription}
-                onChange={(e) => updatePostField('jobDescription', e.target.value)}
-                disabled={!canCreateJobPost}
-              />
-            </label>
+            <div className="job-form-block">
+              <div className="job-form-block-head">
+                <p className="eyebrow">Description</p>
+                <h4>Role Expectations</h4>
+              </div>
+              <label>
+                <span>Job Description</span>
+                <textarea
+                  rows={5}
+                  placeholder="Describe role responsibilities, must-have skills, and candidate expectations"
+                  value={postForm.jobDescription}
+                  onChange={(e) => updatePostField('jobDescription', e.target.value)}
+                  disabled={!canCreateJobPost}
+                />
+              </label>
+            </div>
 
-            <label>
-              <span>Salary Range</span>
-              <input
-                type="text"
-                placeholder="e.g. $40,000 - $55,000"
-                value={postForm.salaryRange}
-                onChange={(e) => updatePostField('salaryRange', e.target.value)}
-                disabled={!canCreateJobPost}
-              />
-            </label>
-
-            <button className="btn btn-primary-solid" type="submit" disabled={submittingPost || !canCreateJobPost}>
-              {submittingPost ? 'Posting...' : 'Post Job'}
-            </button>
+            <div className="job-composer-footer">
+              <p className="job-composer-footnote">
+                Job posts are visible in the portal feed and can receive direct student applications.
+              </p>
+              <button className="btn btn-primary-solid" type="submit" disabled={submittingPost || !canCreateJobPost}>
+                {submittingPost ? 'Posting...' : 'Post Job'}
+              </button>
+            </div>
           </form>
         </section>
+
+        <aside className="panel job-side-guidance">
+          <div className="job-side-guidance-block">
+            <p className="eyebrow">Posting Status</p>
+            <h4>{canCreateJobPost ? 'You can post now' : 'Posting currently restricted'}</h4>
+            <p>
+              {canCreateJobPost
+                ? 'Your account currently has permission to publish opportunities in the Job Portal.'
+                : 'Posting requires verified alumni status or faculty/admin role.'}
+            </p>
+          </div>
+
+          <div className="job-side-guidance-block">
+            <p className="eyebrow">Recommended Quality</p>
+            <ul className="job-guidance-list">
+              <li>Keep title specific and searchable.</li>
+              <li>Include clear salary range and expectations.</li>
+              <li>Use concise, outcome-focused role description.</li>
+            </ul>
+          </div>
+        </aside>
       </section>
 
-      <section className="panel feed-panel">
+      <section className="panel feed-panel job-feed-panel">
         <div className="panel-header feed-header">
           <div>
             <p className="eyebrow">Explore</p>
-            <h3>Job Feed</h3>
+            <h3>Open Job Listings</h3>
           </div>
           <div className="header-actions">
             <span className="pill">{loadingFeed ? 'Refreshing...' : `${filteredFeedItems.length} post(s)`}</span>
@@ -372,12 +443,12 @@ export default function JobPortalPage() {
           </div>
         </div>
 
-        <form className="feed-filters" onSubmit={(e) => e.preventDefault()}>
+        <form className="feed-filters job-feed-filters" onSubmit={(e) => e.preventDefault()}>
           <label>
-            <span>Search</span>
+            <span>Search Jobs</span>
             <input
               type="search"
-              placeholder="Search title, company, description, salary"
+              placeholder="Search by title, company, description, or salary"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
@@ -402,33 +473,30 @@ export default function JobPortalPage() {
             <p>Create a job post above, or change your search.</p>
           </div>
         ) : (
-          <div className="feed-grid">
+          <div className="feed-grid job-feed-grid">
             {filteredFeedItems.map((item, index) => {
               const details = getJobDetailsFromPost(item);
               const isOwner = isPostOwner(item);
               const canViewApplications = isOwner && isAlumni;
 
               return (
-                <article className="feed-card social-post-card job-post-card" key={item.id} style={{ '--card-index': index }}>
-                  <div className="social-post-header">
-                    <div className="post-author-chip">
-                      <span className="post-avatar">J</span>
-                      <div>
-                        <strong>{details.jobTitle}</strong>
-                        <small>{details.companyName}</small>
-                      </div>
+                <article className="feed-card social-post-card job-post-card job-post-card-elevated" key={item.id} style={{ '--card-index': index }}>
+                  <header className="job-card-head">
+                    <div className="job-card-title-wrap">
+                      <h4>{details.jobTitle}</h4>
+                      <p>{details.companyName}</p>
                     </div>
                     <span className="pill">{formatDate(item.createdAt)}</span>
-                  </div>
+                  </header>
 
-                  <p className="feed-summary">{details.jobDescription}</p>
-
-                  <div className="post-utility-bar">
+                  <div className="job-card-meta-row">
                     <span className="pill">Salary: {details.salaryRange}</span>
                     {isOwner && <span className="pill tone-ok">Your post</span>}
                   </div>
 
-                  <div className="feed-card-actions social-actions">
+                  <p className="job-card-description">{details.jobDescription}</p>
+
+                  <footer className="feed-card-actions social-actions job-card-actions">
                     {!isOwner && (
                       isAuthenticated ? (
                         <Link
@@ -441,7 +509,7 @@ export default function JobPortalPage() {
                             companyName: details.companyName,
                           }}
                         >
-                          Apply
+                          Apply Now
                         </Link>
                       ) : (
                         <Link className="btn btn-soft" to="/login">Sign in to Apply</Link>
@@ -457,7 +525,7 @@ export default function JobPortalPage() {
                         View Applications
                       </Link>
                     )}
-                  </div>
+                  </footer>
                 </article>
               );
             })}

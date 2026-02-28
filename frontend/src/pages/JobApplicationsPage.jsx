@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { getApplicationsForPost, getJobDetailsFromPost } from '../utils/jobPortalStorage';
@@ -131,6 +131,10 @@ export default function JobApplicationsPage() {
     }
   }
 
+  const jobDetails = useMemo(() => {
+    return jobPost ? getJobDetailsFromPost(jobPost) : null;
+  }, [jobPost]);
+
   if (!enteredFromViewApplications) {
     return (
       <div className="moderation-page">
@@ -147,82 +151,111 @@ export default function JobApplicationsPage() {
   }
 
   return (
-    <div className="moderation-page">
-      <section className="panel placeholder-panel">
-        <div className="placeholder-hero">
-          <p className="eyebrow">Job Applications</p>
-          <h2>Submitted candidates</h2>
-          <p>Review all applications for your posted job.</p>
+    <div className="moderation-page job-applications-page">
+      <section className="panel job-portal-overview-panel">
+        <div className="job-portal-overview-head">
+          <div>
+            <p className="eyebrow">Recruitment Inbox</p>
+            <h2>Candidate Applications</h2>
+            <p>Review applications, evaluate fit, and contact promising candidates efficiently.</p>
+          </div>
+          <div className="job-overview-stats">
+            <div className="job-overview-stat-card">
+              <span>Total applications</span>
+              <strong>{applications.length}</strong>
+            </div>
+            <div className="job-overview-stat-card">
+              <span>Latest received</span>
+              <strong>{applications[0]?.createdAt ? formatDate(applications[0].createdAt).split(',')[0] : 'N/A'}</strong>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section className="panel feed-panel">
-        <div className="panel-header feed-header">
-          <div>
-            <p className="eyebrow">Applications</p>
-            <h3>{jobPost ? getJobDetailsFromPost(jobPost).jobTitle : 'Job Post'}</h3>
+      <section className="job-applications-layout">
+        <section className="panel feed-panel job-applications-main">
+          <div className="panel-header feed-header">
+            <div>
+              <p className="eyebrow">Applications</p>
+              <h3>{jobDetails?.jobTitle || 'Job Post'}</h3>
+            </div>
+            <div className="header-actions">
+              <span className="pill">{loading ? 'Loading...' : `${applications.length} candidate(s)`}</span>
+              <button type="button" className="btn btn-soft" onClick={refreshApplications} disabled={loading}>Refresh</button>
+              <Link className="btn btn-soft" to="/job-portal">Back</Link>
+            </div>
           </div>
-          <div className="header-actions">
-            <span className="pill">{loading ? 'Loading...' : `${applications.length} application(s)`}</span>
-            <button type="button" className="btn btn-soft" onClick={refreshApplications} disabled={loading}>Refresh</button>
-            <Link className="btn btn-soft" to="/job-portal">Back</Link>
-          </div>
-        </div>
 
-        {loading ? (
-          <div className="skeleton-grid" aria-hidden="true">
-            {Array.from({ length: 3 }).map((_, idx) => (
-              <div className="feed-card skeleton-card" key={idx} />
-            ))}
-          </div>
-        ) : error ? (
-          <div className="inline-alert" role="alert">
-            <p>{error}</p>
-          </div>
-        ) : applications.length === 0 ? (
-          <div className="empty-state">
-            <h4>No applications submitted yet</h4>
-            <p>When students apply, they will appear in this list.</p>
-          </div>
-        ) : (
-          <div className="feed-grid">
-            {applications.map((application, index) => (
-              <article className="feed-card notification-card" key={application.id} style={{ '--card-index': index }}>
-                <div className="notification-card-head">
-                  <div className="notification-identity">
-                    <span className="notification-icon" aria-hidden="true">CV</span>
-                    <div className="notification-title-wrap">
-                      <p className="notification-kicker">Applicant</p>
-                      <h4 className="notification-title">{application.applicantName || 'Unknown applicant'}</h4>
+          {loading ? (
+            <div className="skeleton-grid" aria-hidden="true">
+              {Array.from({ length: 3 }).map((_, idx) => (
+                <div className="feed-card skeleton-card" key={idx} />
+              ))}
+            </div>
+          ) : error ? (
+            <div className="inline-alert" role="alert">
+              <p>{error}</p>
+            </div>
+          ) : applications.length === 0 ? (
+            <div className="empty-state">
+              <h4>No applications submitted yet</h4>
+              <p>When students apply, their profiles and CV files will appear here.</p>
+            </div>
+          ) : (
+            <div className="feed-grid job-applicant-grid">
+              {applications.map((application, index) => (
+                <article className="feed-card applicant-profile-card" key={application.id} style={{ '--card-index': index }}>
+                  <header className="applicant-profile-head">
+                    <div>
+                      <p className="applicant-kicker">Applicant</p>
+                      <h4>{application.applicantName || 'Unknown applicant'}</h4>
                     </div>
-                  </div>
-                  <span className="notification-time">{formatDate(application.createdAt)}</span>
-                </div>
+                    <span className="pill">{formatDate(application.createdAt)}</span>
+                  </header>
 
-                <div className="job-application-details">
-                  <p><strong>Student ID:</strong> {application.studentId || 'N/A'}</p>
-                  <p><strong>Current Year:</strong> {application.currentYear || 'N/A'}</p>
-                  <p><strong>Contact:</strong> {application.contactInformation || 'N/A'}</p>
-                  <p><strong>Description:</strong> {application.description || 'N/A'}</p>
-                  <p>
-                    <strong>CV:</strong>{' '}
+                  <div className="applicant-meta-grid">
+                    <p><strong>Student ID</strong><span>{application.studentId || 'N/A'}</span></p>
+                    <p><strong>Current Year</strong><span>{application.currentYear || 'N/A'}</span></p>
+                    <p><strong>Contact</strong><span>{application.contactInformation || 'N/A'}</span></p>
+                  </div>
+
+                  <div className="applicant-summary-block">
+                    <h5>Candidate Statement</h5>
+                    <p>{application.description || 'No description provided.'}</p>
+                  </div>
+
+                  <div className="feed-card-actions applicant-actions">
                     {application.cvDataUrl ? (
                       <a
                         href={application.cvDataUrl}
                         download={application.cvFileName || 'cv'}
-                        className="inline-link"
+                        className="btn btn-primary-solid"
                       >
-                        {application.cvFileName || 'Download CV'} ({formatCvSize(application.cvFileSize)})
+                        Download CV ({formatCvSize(application.cvFileSize)})
                       </a>
                     ) : (
-                      application.cvFileName || 'Not available'
+                      <span className="pill">CV not available</span>
                     )}
-                  </p>
-                </div>
-              </article>
-            ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <aside className="panel job-applications-side">
+          <div className="job-apply-post-summary">
+            <p className="eyebrow">Position</p>
+            <h3>{jobDetails?.jobTitle || 'Job Post'}</h3>
+            <p><strong>Company:</strong> {jobDetails?.companyName || 'N/A'}</p>
+            <p><strong>Salary:</strong> {jobDetails?.salaryRange || 'N/A'}</p>
           </div>
-        )}
+
+          <div className="job-apply-note-block">
+            <h4>Review checklist</h4>
+            <p>Prioritize candidates with clear motivation, relevant coursework or projects, and complete contact details.</p>
+          </div>
+        </aside>
       </section>
     </div>
   );

@@ -199,7 +199,7 @@ export default function JobApplicationPage() {
   const jobDetails = jobPost ? getJobDetailsFromPost(jobPost) : null;
 
   return (
-    <div className="moderation-page">
+    <div className="moderation-page job-application-page">
       {banner.message && (
         <section className={`banner banner-${banner.type === 'error' ? 'error' : 'success'}`} aria-live="polite">
           <p>{banner.message}</p>
@@ -207,11 +207,23 @@ export default function JobApplicationPage() {
         </section>
       )}
 
-      <section className="panel placeholder-panel">
-        <div className="placeholder-hero">
-          <p className="eyebrow">Job Application</p>
-          <h2>Apply to this job</h2>
-          <p>Fill in all required fields and submit your CV.</p>
+      <section className="panel job-portal-overview-panel">
+        <div className="job-portal-overview-head">
+          <div>
+            <p className="eyebrow">Job Application</p>
+            <h2>Submit Your Application</h2>
+            <p>Provide accurate profile details and a strong CV to maximize your selection chances.</p>
+          </div>
+          <div className="job-overview-stats">
+            <div className="job-overview-stat-card">
+              <span>Required sections</span>
+              <strong>3</strong>
+            </div>
+            <div className="job-overview-stat-card">
+              <span>CV max size</span>
+              <strong>4 MB</strong>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -226,98 +238,132 @@ export default function JobApplicationPage() {
         </section>
       )}
 
-      <section className="panel">
-        {loadingPost ? (
-          <p>Loading job post...</p>
-        ) : postError ? (
-          <div className="inline-alert" role="alert">
-            <p>{postError}</p>
-            <Link className="btn btn-soft" to="/job-portal">Back to Job Portal</Link>
-          </div>
-        ) : (
-          <>
-            <div className="job-apply-post-summary">
-              <h3>{jobDetails?.jobTitle}</h3>
-              <p><strong>Company:</strong> {jobDetails?.companyName}</p>
-              <p><strong>Salary Range:</strong> {jobDetails?.salaryRange}</p>
+      <section className="job-application-layout">
+        <section className="panel job-application-main-panel">
+          {loadingPost ? (
+            <p>Loading job post...</p>
+          ) : postError ? (
+            <div className="inline-alert" role="alert">
+              <p>{postError}</p>
+              <Link className="btn btn-soft" to="/job-portal">Back to Job Portal</Link>
             </div>
+          ) : (
+            <form className="stacked-form job-application-form" onSubmit={handleSubmit}>
+              <div className="job-form-block">
+                <div className="job-form-block-head">
+                  <p className="eyebrow">Applicant Details</p>
+                  <h3>Personal Information</h3>
+                </div>
+                <div className="field-row two-col">
+                  <label>
+                    <span>Name</span>
+                    <input
+                      type="text"
+                      placeholder="Your full name"
+                      value={formState.name}
+                      onChange={(e) => updateFormField('name', e.target.value)}
+                      disabled={!isAuthenticated || submitting}
+                    />
+                  </label>
+                  <label>
+                    <span>Student ID</span>
+                    <input
+                      type="text"
+                      placeholder="Your university student ID"
+                      value={formState.studentId}
+                      onChange={(e) => updateFormField('studentId', e.target.value)}
+                      disabled={!isAuthenticated || submitting}
+                    />
+                  </label>
+                </div>
 
-            <form className="stacked-form" onSubmit={handleSubmit}>
-              <div className="field-row two-col">
                 <label>
-                  <span>Name</span>
+                  <span>Current Year</span>
                   <input
                     type="text"
-                    value={formState.name}
-                    onChange={(e) => updateFormField('name', e.target.value)}
-                    disabled={!isAuthenticated || submitting}
-                  />
-                </label>
-                <label>
-                  <span>Student ID</span>
-                  <input
-                    type="text"
-                    value={formState.studentId}
-                    onChange={(e) => updateFormField('studentId', e.target.value)}
+                    placeholder="e.g. 4th Year"
+                    value={formState.currentYear}
+                    onChange={(e) => updateFormField('currentYear', e.target.value)}
                     disabled={!isAuthenticated || submitting}
                   />
                 </label>
               </div>
 
-              <label>
-                <span>Current Year</span>
-                <input
-                  type="text"
-                  placeholder="e.g. 4th Year"
-                  value={formState.currentYear}
-                  onChange={(e) => updateFormField('currentYear', e.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                />
-              </label>
+              <div className="job-form-block">
+                <div className="job-form-block-head">
+                  <p className="eyebrow">Application Content</p>
+                  <h3>Tell the employer about yourself</h3>
+                </div>
+                <label>
+                  <span>Description</span>
+                  <textarea
+                    rows={5}
+                    placeholder="Write a concise statement about your background, skills, and motivation."
+                    value={formState.description}
+                    onChange={(e) => updateFormField('description', e.target.value)}
+                    disabled={!isAuthenticated || submitting}
+                  />
+                </label>
 
-              <label>
-                <span>Description</span>
-                <textarea
-                  rows={4}
-                  placeholder="Write a brief statement about your background and why you're applying."
-                  value={formState.description}
-                  onChange={(e) => updateFormField('description', e.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                />
-              </label>
+                <label>
+                  <span>Contact Information</span>
+                  <textarea
+                    rows={3}
+                    placeholder="Provide your email, phone number, or preferred contact method."
+                    value={formState.contactInformation}
+                    onChange={(e) => updateFormField('contactInformation', e.target.value)}
+                    disabled={!isAuthenticated || submitting}
+                  />
+                </label>
+              </div>
 
-              <label>
-                <span>Upload CV</span>
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  onChange={handleCvChange}
-                  disabled={!isAuthenticated || submitting}
-                />
-                {cvFile && (
-                  <small className="composer-tag-hint">Selected: {cvFile.name}</small>
-                )}
-              </label>
+              <div className="job-form-block">
+                <div className="job-form-block-head">
+                  <p className="eyebrow">Attachment</p>
+                  <h3>Upload your CV</h3>
+                </div>
+                <label className="job-cv-field">
+                  <span>CV File</span>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={handleCvChange}
+                    disabled={!isAuthenticated || submitting}
+                  />
+                  <small className="composer-tag-hint">Accepted: PDF, DOC, DOCX (max 4 MB)</small>
+                  {cvFile && (
+                    <div className="job-cv-selected">
+                      <strong>Selected</strong>
+                      <span>{cvFile.name}</span>
+                    </div>
+                  )}
+                </label>
+              </div>
 
-              <label>
-                <span>Contact Information</span>
-                <textarea
-                  rows={3}
-                  placeholder="Provide your email, phone number, or preferred contact method."
-                  value={formState.contactInformation}
-                  onChange={(e) => updateFormField('contactInformation', e.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                />
-              </label>
-
-              <div className="feed-card-actions">
+              <div className="feed-card-actions job-apply-actions">
                 <button className="btn btn-primary-solid" type="submit" disabled={!isAuthenticated || submitting}>
                   {submitting ? 'Submitting...' : 'Submit Application'}
                 </button>
                 <Link className="btn btn-soft" to="/job-portal">Cancel</Link>
               </div>
             </form>
-          </>
+          )}
+        </section>
+
+        {!loadingPost && !postError && (
+          <aside className="panel job-application-side-panel">
+            <div className="job-apply-post-summary">
+              <p className="eyebrow">Position</p>
+              <h3>{jobDetails?.jobTitle}</h3>
+              <p><strong>Company:</strong> {jobDetails?.companyName}</p>
+              <p><strong>Salary Range:</strong> {jobDetails?.salaryRange}</p>
+            </div>
+
+            <div className="job-apply-note-block">
+              <h4>Before you submit</h4>
+              <p>Ensure your contact details are correct and your CV reflects your latest academic and project work.</p>
+            </div>
+          </aside>
         )}
       </section>
     </div>
