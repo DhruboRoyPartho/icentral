@@ -15,7 +15,7 @@ const initialPostForm = {
 };
 
 const initialFilters = {
-  status: 'all',
+  status: 'published',
   tag: '',
   pinnedOnly: false,
 };
@@ -157,7 +157,7 @@ export default function JobPortalPage() {
       const baseParams = new URLSearchParams();
       baseParams.set('type', 'JOB');
       if (filters.status) baseParams.set('status', filters.status);
-      if (filters.status === 'all') baseParams.set('includeArchived', 'true');
+      if (filters.status === 'archived') baseParams.set('includeArchived', 'true');
       if (filters.tag) baseParams.set('tag', filters.tag);
       if (filters.pinnedOnly) baseParams.set('pinnedOnly', 'true');
       if (activeSearch) baseParams.set('search', activeSearch);
@@ -587,7 +587,6 @@ export default function JobPortalPage() {
               <option value="published">Published</option>
               <option value="draft">Draft</option>
               <option value="archived">Archived</option>
-              <option value="all">All</option>
             </select>
           </label>
           <label>

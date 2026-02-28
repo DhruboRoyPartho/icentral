@@ -16,7 +16,7 @@ const initialPostForm = {
 
 const initialFilters = {
   type: '',
-  status: 'all',
+  status: 'published',
   tag: '',
   pinnedOnly: false,
 };
@@ -146,7 +146,7 @@ export default function HomeFeedPage() {
       const baseParams = new URLSearchParams();
       if (filters.type) baseParams.set('type', filters.type);
       if (filters.status) baseParams.set('status', filters.status);
-      if (filters.status === 'all') baseParams.set('includeArchived', 'true');
+      if (filters.status === 'archived') baseParams.set('includeArchived', 'true');
       if (filters.tag) baseParams.set('tag', filters.tag);
       if (filters.pinnedOnly) baseParams.set('pinnedOnly', 'true');
       if (activeSearch) baseParams.set('search', activeSearch);
@@ -574,7 +574,6 @@ export default function HomeFeedPage() {
               <option value="published">Published</option>
               <option value="draft">Draft</option>
               <option value="archived">Archived</option>
-              <option value="all">All</option>
             </select>
           </label>
           <label>
