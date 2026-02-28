@@ -99,9 +99,10 @@ export default function JobPortalPage() {
   const activeSearch = deferredSearch.trim();
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isAlumni = normalizedRole === 'alumni';
+  const isFacultyOrAdmin = normalizedRole === 'faculty' || normalizedRole === 'admin';
   const fallbackStatus = String(user?.alumniVerificationStatus || '').toLowerCase();
   const effectiveVerificationStatus = verificationStatus || fallbackStatus || 'not_submitted';
-  const canCreateJobPost = isAuthenticated && isAlumni && effectiveVerificationStatus === 'approved';
+  const canCreateJobPost = isAuthenticated && (isFacultyOrAdmin || (isAlumni && effectiveVerificationStatus === 'approved'));
   const composerAvatar = String(user?.full_name || user?.name || user?.email || 'G').trim().charAt(0).toUpperCase() || 'G';
   const composerSelectedTagIds = Array.isArray(postForm.tagIds)
     ? postForm.tagIds.map((value) => String(value)).filter(Boolean)
@@ -323,8 +324,8 @@ export default function JobPortalPage() {
     if (!canCreateJobPost) {
       setBanner({
         type: 'error',
-        message: !isAlumni
-          ? 'Only alumni can post in the Job Portal.'
+        message: (!isAlumni && !isFacultyOrAdmin)
+          ? 'Only verified alumni or faculty/admin can post in the Job Portal.'
           : effectiveVerificationStatus === 'pending'
             ? 'Your alumni verification is still pending review.'
             : 'Only verified alumni can post in the Job Portal.',
@@ -440,7 +441,7 @@ export default function JobPortalPage() {
           {isAuthenticated && !canCreateJobPost && (
             <div className="inline-alert warn-alert">
               <p>
-                {!isAlumni && 'Only user type alumni can create job posts in this section.'}
+                {!isAlumni && !isFacultyOrAdmin && 'Only verified alumni or faculty/admin can create job posts in this section.'}
                 {isAlumni && loadingVerification && 'Checking your alumni verification status...'}
                 {isAlumni && !loadingVerification && effectiveVerificationStatus === 'pending' && (
                   <>
@@ -467,7 +468,7 @@ export default function JobPortalPage() {
                 id="new-post-summary"
                 className="composer-summary-input"
                 type="text"
-                placeholder={canCreateJobPost ? 'Share a job opportunity' : 'Verified alumni account required to post jobs'}
+                placeholder={canCreateJobPost ? 'Share a job opportunity' : 'Verified alumni or faculty/admin account required to post jobs'}
                 value={postForm.summary}
                 onChange={(e) => updatePostField('summary', e.target.value)}
                 disabled={!canCreateJobPost}

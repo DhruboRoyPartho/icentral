@@ -155,6 +155,14 @@ function isAlumniRole(role) {
     return String(role || '').toLowerCase() === 'alumni';
 }
 
+function canCreateAnnouncement(role) {
+    return isModeratorRole(role);
+}
+
+function canCreateJobAsBypassRole(role) {
+    return isModeratorRole(role);
+}
+
 function resolveVerificationStatus(rows) {
     const applications = Array.isArray(rows) ? rows : [];
     if (applications.some((item) => item.status === 'approved')) return 'approved';
@@ -710,30 +718,51 @@ app.post('/posts', ensureDb, async (req, res) => {
         }
 
         const normalizedType = String(payload.postFields.type || '').toUpperCase();
-        if (normalizedType === 'JOB') {
+        if (normalizedType === 'ANNOUNCEMENT' || normalizedType === 'JOB') {
             const requestUser = getRequestUser(req);
             if (!requestUser?.id) {
-                return res.status(401).json({ error: 'Authentication is required to create JOB posts.' });
-            }
-
-            if (!isAlumniRole(requestUser.role)) {
-                return res.status(403).json({ error: 'Only verified alumni can create JOB posts.' });
-            }
-
-            const verificationStatus = await getAlumniVerificationStatus(requestUser.id).catch((error) => {
-                if (error?.code === '42P01') {
-                    const err = new Error(`Missing table "${CONFIG.tables.alumniVerificationApplications}". Run services/user-service/schema.sql first.`);
-                    err.status = 500;
-                    throw err;
-                }
-                throw error;
-            });
-
-            if (verificationStatus !== 'approved') {
-                return res.status(403).json({ error: 'Only verified alumni can create JOB posts.' });
+                return res.status(401).json({
+                    error: `Authentication is required to create ${normalizedType} posts.`,
+                });
             }
 
             payload.postFields.author_id = requestUser.id;
+
+            if (normalizedType === 'ANNOUNCEMENT' && !canCreateAnnouncement(requestUser.role)) {
+                return res.status(403).json({
+                    error: 'Only faculty/admin can create ANNOUNCEMENT posts.',
+                });
+            }
+        }
+
+        if (normalizedType === 'JOB') {
+            const requestUser = getRequestUser(req);
+            if (canCreateJobAsBypassRole(requestUser?.role)) {
+                payload.postFields.author_id = requestUser.id;
+            } else {
+                if (!isAlumniRole(requestUser?.role)) {
+                    return res.status(403).json({
+                        error: 'Only verified alumni or faculty/admin can create JOB posts.',
+                    });
+                }
+
+                const verificationStatus = await getAlumniVerificationStatus(requestUser.id).catch((error) => {
+                    if (error?.code === '42P01') {
+                        const err = new Error(`Missing table "${CONFIG.tables.alumniVerificationApplications}". Run services/user-service/schema.sql first.`);
+                        err.status = 500;
+                        throw err;
+                    }
+                    throw error;
+                });
+
+                if (verificationStatus !== 'approved') {
+                    return res.status(403).json({
+                        error: 'Only verified alumni or faculty/admin can create JOB posts.',
+                    });
+                }
+
+                payload.postFields.author_id = requestUser.id;
+            }
         }
 
         const { data: createdPost, error: createError } = await supabase
