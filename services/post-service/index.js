@@ -614,7 +614,9 @@ async function enrichPosts(postRows, { requestUserId = null } = {}) {
 
     const withTags = await attachTags(mapped);
     const postIds = withTags.map((post) => post.id);
+    const authorIds = [...new Set(withTags.map((post) => post.authorId).filter(Boolean))];
     const refsByPostId = await getPostRefs(postIds);
+    const authorMap = await getUsersByIds(authorIds);
     const voteSummaryByPostId = await getVoteSummaryByPostIds(postIds, requestUserId);
     const commentCountByPostId = await getCommentCountByPostIds(postIds);
 
@@ -627,9 +629,12 @@ async function enrichPosts(postRows, { requestUserId = null } = {}) {
             userVote: null,
         };
         const commentCount = commentCountByPostId.get(post.id) || 0;
+        const author = post.authorId ? (authorMap.get(post.authorId) || null) : null;
 
         return {
             ...post,
+            author,
+            authorName: author?.fullName || author?.email || null,
             refs: refsByPostId.get(post.id) || [],
             score: voteSummary.score,
             voteScore: voteSummary.voteScore,

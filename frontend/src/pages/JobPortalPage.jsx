@@ -1,5 +1,5 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { getJobDetailsFromPost } from '../utils/jobPortalStorage';
 
@@ -13,6 +13,7 @@ const initialPostForm = {
 };
 
 const FEED_PAGE_LIMIT = 50;
+const CARD_NAV_IGNORE_SELECTOR = 'a,button,input,textarea,select,label,[role="button"],.post-comments-panel,[data-prevent-card-nav="true"]';
 
 async function apiRequest(path, options = {}) {
   const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
@@ -77,6 +78,7 @@ function getCommentCount(post) {
 }
 
 export default function JobPortalPage() {
+  const navigate = useNavigate();
   const { token, isAuthenticated, user, setAuthSession } = useAuth();
   const [feedItems, setFeedItems] = useState([]);
   const [postForm, setPostForm] = useState(initialPostForm);
@@ -231,6 +233,28 @@ export default function JobPortalPage() {
 
   function updatePostField(field, value) {
     setPostForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function shouldIgnoreCardNavigation(target) {
+    if (!(target instanceof Element)) return false;
+    return Boolean(target.closest(CARD_NAV_IGNORE_SELECTOR));
+  }
+
+  function openPostDetails(postId) {
+    if (!postId) return;
+    navigate(`/posts/${postId}`);
+  }
+
+  function handleCardNavigation(event, postId) {
+    if (!postId || shouldIgnoreCardNavigation(event.target)) return;
+    openPostDetails(postId);
+  }
+
+  function handleCardKeyNavigation(event, postId) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!postId || shouldIgnoreCardNavigation(event.target)) return;
+    event.preventDefault();
+    openPostDetails(postId);
   }
 
   function updatePostEngagement(postId, patch) {
@@ -658,7 +682,15 @@ export default function JobPortalPage() {
               const canViewApplications = isOwner && isAlumni;
 
               return (
-                <article className="feed-card social-post-card job-post-card job-post-card-elevated" key={item.id} style={{ '--card-index': index }}>
+                <article
+                  className="feed-card social-post-card job-post-card job-post-card-elevated feed-card-linkable"
+                  key={item.id}
+                  style={{ '--card-index': index }}
+                  role="link"
+                  tabIndex={0}
+                  onClick={(event) => handleCardNavigation(event, item.id)}
+                  onKeyDown={(event) => handleCardKeyNavigation(event, item.id)}
+                >
                   <header className="job-card-head">
                     <div className="job-card-title-wrap">
                       <h4>{details.jobTitle}</h4>

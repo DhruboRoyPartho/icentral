@@ -1,5 +1,5 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
@@ -53,6 +53,7 @@ const initialFilters = {
   pinnedOnly: false,
 };
 const FEED_PAGE_LIMIT = 10;
+const CARD_NAV_IGNORE_SELECTOR = 'a,button,input,textarea,select,label,[role="button"],.post-comments-panel,[data-prevent-card-nav="true"]';
 
 async function apiRequest(path, options = {}) {
   const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
@@ -131,6 +132,7 @@ function getCommentCount(post) {
 }
 
 export default function HomeFeedPage() {
+  const navigate = useNavigate();
   const { isAuthenticated, isModerator, user } = useAuth();
   const imageInputRef = useRef(null);
   const [feedItems, setFeedItems] = useState([]);
@@ -257,6 +259,28 @@ export default function HomeFeedPage() {
 
   function updatePostField(field, value) {
     setPostForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function shouldIgnoreCardNavigation(target) {
+    if (!(target instanceof Element)) return false;
+    return Boolean(target.closest(CARD_NAV_IGNORE_SELECTOR));
+  }
+
+  function openPostDetails(postId) {
+    if (!postId) return;
+    navigate(`/posts/${postId}`);
+  }
+
+  function handleCardNavigation(event, postId) {
+    if (!postId || shouldIgnoreCardNavigation(event.target)) return;
+    openPostDetails(postId);
+  }
+
+  function handleCardKeyNavigation(event, postId) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!postId || shouldIgnoreCardNavigation(event.target)) return;
+    event.preventDefault();
+    openPostDetails(postId);
   }
 
   function isPostOwner(post) {
@@ -563,7 +587,7 @@ export default function HomeFeedPage() {
     }
   }
 
-  const storyItems = useMemo(() => (
+  const topPostItems = useMemo(() => (
     feedItems
       .filter((item) => String(item?.status || '').toLowerCase() !== 'archived')
       .slice()
@@ -580,7 +604,8 @@ export default function HomeFeedPage() {
           ? item.refs.find((ref) => ref?.service === 'image-upload' && ref?.metadata?.imageDataUrl)
           : null;
         return {
-          id: item.id || `story-${index}`,
+          id: item.id || '',
+          key: item.id || `top-post-${index}`,
           imageUrl: imageRef?.metadata?.imageDataUrl || '',
           title: item.title || `${toTitleCase(item.type || 'post')} update`,
           authorLabel: item.authorId ? `Author ${String(item.authorId).slice(0, 8)}` : 'Community',
@@ -772,17 +797,24 @@ export default function HomeFeedPage() {
 
       </section>
 
-      <section className="story-strip" aria-label="Stories">
-        {storyItems.length === 0 ? (
+      <section className="story-strip" aria-label="Top posts">
+        {topPostItems.length === 0 ? (
           <article className="story-card story-card-empty">
             <div className="story-overlay">
-              <strong>No stories yet</strong>
+              <strong>No top posts yet</strong>
               <small>Create a post to populate this section.</small>
             </div>
           </article>
         ) : (
-          storyItems.map((story) => (
-            <article className="story-card" key={story.id}>
+          topPostItems.map((story) => (
+            <article
+              className={`story-card${story.id ? ' is-linkable' : ''}`}
+              key={story.key}
+              role={story.id ? 'link' : undefined}
+              tabIndex={story.id ? 0 : undefined}
+              onClick={story.id ? () => openPostDetails(story.id) : undefined}
+              onKeyDown={story.id ? (event) => handleCardKeyNavigation(event, story.id) : undefined}
+            >
               {story.imageUrl ? (
                 <img src={story.imageUrl} alt={story.title} loading="lazy" />
               ) : (
@@ -876,7 +908,15 @@ export default function HomeFeedPage() {
         ) : (
           <div className="feed-grid">
             {feedItems.map((item, index) => (
-              <article className="feed-card social-post-card" key={item.id} style={{ '--card-index': index }}>
+              <article
+                className="feed-card social-post-card feed-card-linkable"
+                key={item.id}
+                style={{ '--card-index': index }}
+                role="link"
+                tabIndex={0}
+                onClick={(event) => handleCardNavigation(event, item.id)}
+                onKeyDown={(event) => handleCardKeyNavigation(event, item.id)}
+              >
                 <div className="social-post-header">
                   <div className="post-author-chip">
                     <span className="post-avatar">{(item.type || 'P').slice(0, 1)}</span>
