@@ -417,6 +417,7 @@
   align-items: center;
   gap: 8px;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .topbar-circle-btn,
@@ -469,6 +470,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 40px;
+  max-width: 240px;
+  min-width: 0;
+  overflow: hidden;
+  flex: 0 1 240px;
 }
 
 .avatar-badge {
@@ -486,21 +492,36 @@
   display: grid;
   text-align: left;
   line-height: 1.05;
+  min-width: 0;
+  gap: 2px;
 }
 
 .profile-meta strong {
   font-size: 0.9rem;
   color: var(--txt);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .profile-meta small {
   text-transform: capitalize;
   color: var(--muted);
   font-size: 0.72rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .logout-mini-btn {
   min-height: 40px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  min-width: 84px;
+  padding-left: 14px;
+  padding-right: 14px;
 }
 
 .social-layout {
