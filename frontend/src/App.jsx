@@ -12,6 +12,7 @@ import AlumniVerificationPage from './pages/AlumniVerificationPage';
 import ModerationPage from './pages/ModerationPage';
 import NotificationsPage from './pages/NotificationsPage';
 import SectionPlaceholderPage from './pages/SectionPlaceholderPage';
+import PostDetailsPage from './pages/PostDetailsPage';
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/home" replace />} />
           <Route path="/home" element={<HomeFeedPage />} />
+          <Route path="/posts/:postId" element={<PostDetailsPage />} />
           <Route path="/job-portal" element={<JobPortalPage />} />
           <Route path="/job-portal/:postId/apply" element={<JobApplicationPage />} />
           <Route path="/job-portal/:postId/applications" element={<JobApplicationsPage />} />

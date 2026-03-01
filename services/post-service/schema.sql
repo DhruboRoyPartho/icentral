@@ -40,6 +40,26 @@ create table if not exists public.post_refs (
     created_at timestamptz not null default now()
 );
 
+create table if not exists public.post_votes (
+    post_id uuid not null references public.posts(id) on delete cascade,
+    user_id uuid not null references public.users(id) on delete cascade,
+    vote smallint not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint post_votes_vote_check check (vote in (-1, 1)),
+    primary key (post_id, user_id)
+);
+
+create table if not exists public.post_comments (
+    id uuid primary key default gen_random_uuid(),
+    post_id uuid not null references public.posts(id) on delete cascade,
+    author_id uuid not null references public.users(id) on delete cascade,
+    content text not null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint post_comments_content_check check (char_length(trim(content)) > 0)
+);
+
 create index if not exists idx_posts_status_created_at
     on public.posts (status, created_at desc);
 
@@ -60,3 +80,15 @@ create index if not exists idx_post_tags_tag_id
 
 create index if not exists idx_post_refs_post_id
     on public.post_refs (post_id);
+
+create index if not exists idx_post_votes_user_id
+    on public.post_votes (user_id);
+
+create index if not exists idx_post_votes_post_vote
+    on public.post_votes (post_id, vote);
+
+create index if not exists idx_post_comments_post_created_at
+    on public.post_comments (post_id, created_at desc);
+
+create index if not exists idx_post_comments_author_id
+    on public.post_comments (author_id);

@@ -49,6 +49,7 @@ function formatDate(value) {
 }
 
 function mapAnnouncementToCard(post) {
+  const postId = String(post?.id || '').trim();
   return {
     id: `announcement-${post.id}`,
     kind: 'announcement',
@@ -58,8 +59,8 @@ function mapAnnouncementToCard(post) {
     title: post.title || 'New announcement posted',
     message: post.summary || 'A new announcement is available in the feed.',
     createdAt: post.createdAt || null,
-    ctaLabel: 'Open Home Feed',
-    ctaTo: '/home',
+    ctaLabel: postId ? 'Open Post' : 'Open Home Feed',
+    ctaTo: postId ? `/posts/${encodeURIComponent(postId)}` : '/home',
   };
 }
 
@@ -125,6 +126,7 @@ function mapVerificationToCard(item, isModerator) {
 }
 
 function mapJobApplicationNotificationToCard(notification) {
+  const postId = String(notification?.postId || '').trim();
   const jobTitle = notification.jobTitle || 'your job post';
   const companyName = notification.companyName ? ` at ${notification.companyName}` : '';
   const applicantName = notification.applicantName || 'A student';
@@ -139,8 +141,8 @@ function mapJobApplicationNotificationToCard(notification) {
     title: 'New job application received',
     message: `${applicantName} applied for ${jobTitle}${companyName}.`,
     createdAt: notification.createdAt || null,
-    ctaLabel: 'Open Job Portal',
-    ctaTo: '/job-portal',
+    ctaLabel: postId ? 'Open Post' : 'Open Job Portal',
+    ctaTo: postId ? `/posts/${encodeURIComponent(postId)}` : '/job-portal',
   };
 }
 
