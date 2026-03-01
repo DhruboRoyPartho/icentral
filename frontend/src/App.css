@@ -26,6 +26,10 @@
   --control-disabled-border: rgba(176, 226, 255, 0.1);
   --focus-border: rgba(255, 183, 3, 0.5);
   --focus-shadow: 0 0 0 4px rgba(255, 183, 3, 0.13);
+  --main-feed-width: 760px;
+  --left-rail-width: 280px;
+  --right-rail-width: 320px;
+  --layout-gap: 16px;
   color: var(--txt);
   font-family: "Space Grotesk", "Inter", system-ui, sans-serif;
 }
@@ -281,9 +285,9 @@
   top: 8px;
   z-index: 90;
   display: grid;
-  grid-template-columns: minmax(250px, 320px) minmax(300px, 1fr) auto;
+  grid-template-columns: var(--left-rail-width) minmax(0, 1fr) var(--right-rail-width);
   align-items: center;
-  gap: 12px;
+  gap: var(--layout-gap);
   margin-bottom: 16px;
   border-radius: 16px;
   padding: 8px 12px;
@@ -371,6 +375,8 @@
   grid-template-columns: repeat(4, minmax(74px, 1fr));
   align-items: center;
   gap: 6px;
+  width: min(100%, var(--main-feed-width));
+  justify-self: center;
 }
 
 .topbar-nav-link {
@@ -499,14 +505,14 @@
 
 .social-layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 320px;
-  gap: 16px;
+  grid-template-columns: var(--left-rail-width) minmax(0, 1fr) var(--right-rail-width);
+  gap: var(--layout-gap);
   align-items: start;
 }
 
 .social-main-content {
   width: 100%;
-  max-width: 760px;
+  max-width: var(--main-feed-width);
   justify-self: center;
   min-width: 0;
 }
