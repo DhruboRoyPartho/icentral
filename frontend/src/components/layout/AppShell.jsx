@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
 import { getUnreadJobApplicationNotificationsForUser } from '../../utils/jobPortalStorage';
 
@@ -247,7 +247,9 @@ export default function AppShell() {
     <div className="social-shell">
       <header className="social-topbar">
         <div className="topbar-left">
-          <div className="brand-badge" aria-hidden="true">IC</div>
+          <Link className="brand-badge topbar-brand-link" to="/home" aria-label="Go to homepage">
+            IC
+          </Link>
           <label className="topbar-search" htmlFor="global-search">
             <span className="topbar-search-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" focusable="false">

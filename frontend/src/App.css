@@ -316,6 +316,15 @@
   flex: 0 0 auto;
 }
 
+.topbar-brand-link {
+  text-decoration: none;
+}
+
+.topbar-brand-link:focus-visible {
+  outline: 2px solid rgba(138, 180, 255, 0.8);
+  outline-offset: 2px;
+}
+
 .topbar-search {
   flex: 1 1 auto;
   display: flex;
