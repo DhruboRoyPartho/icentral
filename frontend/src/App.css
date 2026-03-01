@@ -698,6 +698,25 @@
   background: rgba(255, 255, 255, 0.02);
 }
 
+.contact-item-action {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.contact-item-action:hover {
+  border-color: rgba(138, 180, 255, 0.32);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.contact-item-action:focus-visible {
+  outline: none;
+  border-color: rgba(138, 180, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(58, 138, 255, 0.15);
+}
+
 .contact-avatar {
   width: 34px;
   height: 34px;
@@ -712,6 +731,18 @@
 
 .contact-avatar-group {
   border-radius: 10px;
+}
+
+.notif-announcement .contact-avatar {
+  background: linear-gradient(140deg, #2563eb, #4f46e5);
+}
+
+.notif-verification .contact-avatar {
+  background: linear-gradient(140deg, #06b6d4, #3b82f6);
+}
+
+.notif-job .contact-avatar {
+  background: linear-gradient(140deg, #7c3aed, #2563eb);
 }
 
 .contact-item > div {

@@ -1,20 +1,130 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
+import { getUnreadJobApplicationNotificationsForUser } from '../../utils/jobPortalStorage';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const FEED_SECTIONS = [
   { key: 'home', label: 'Home', to: '/home', hint: 'Main feed', roles: 'all', icon: 'HM' },
   { key: 'jobs', label: 'Job Portal', to: '/job-portal', hint: 'Career posts', roles: 'all', icon: 'JB' },
   { key: 'events', label: 'Events', to: '/events', hint: 'Campus events', roles: 'all', icon: 'EV' },
   { key: 'collaborate', label: 'Collaborate', to: '/collaborate', hint: 'Teams & invites', roles: 'all', icon: 'CO' },
-  { key: 'notifications', label: 'Notifications', to: '/notifications', hint: 'Inbox', roles: 'all', icon: 'NT' },
   { key: 'moderation', label: 'Moderation', to: '/moderation', hint: 'Admin / Faculty', roles: ['admin', 'faculty'], icon: 'MD' },
   { key: 'newsletter', label: 'Newsletter', to: '/newsletter', hint: 'Curation flow', roles: 'all', icon: 'NW' },
 ];
 
-const GROUP_CHATS = [
-  { id: 'grp-1', label: 'ICE-Batch-2021', status: '3 members typing' },
-  { id: 'grp-2', label: 'RU Programmers', status: '14 new updates' },
-];
+async function apiRequest(path, options = {}) {
+  const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const contentType = response.headers.get('content-type') || '';
+  const data = contentType.includes('application/json')
+    ? await response.json()
+    : await response.text();
+
+  if (!response.ok) {
+    const message = typeof data === 'string'
+      ? data
+      : data?.error || data?.message || 'Request failed';
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+function formatRelativeTime(value) {
+  if (!value) return 'No timestamp';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'No timestamp';
+
+  const diffMs = Date.now() - date.getTime();
+  const minuteMs = 60 * 1000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+
+  if (diffMs < minuteMs) return 'Just now';
+  if (diffMs < hourMs) return `${Math.max(1, Math.floor(diffMs / minuteMs))}m ago`;
+  if (diffMs < dayMs) return `${Math.max(1, Math.floor(diffMs / hourMs))}h ago`;
+  if (diffMs < 7 * dayMs) return `${Math.max(1, Math.floor(diffMs / dayMs))}d ago`;
+
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+}
+
+function mapAnnouncementItem(post) {
+  return {
+    id: `announcement-${post.id}`,
+    kind: 'announcement',
+    badge: 'AN',
+    title: post.title || 'New announcement posted',
+    subtitle: formatRelativeTime(post.createdAt),
+    createdAt: post.createdAt || null,
+  };
+}
+
+function mapVerificationItem(item, isModerator) {
+  const normalizedStatus = String(item?.status || '').toLowerCase();
+  const createdAt = item?.reviewedAt || item?.updatedAt || item?.createdAt || null;
+  if (isModerator) {
+    return {
+      id: `verification-${item.id}`,
+      kind: 'verification',
+      badge: 'VF',
+      title: `${item?.applicant?.fullName || 'Alumni'} requested verification`,
+      subtitle: formatRelativeTime(createdAt),
+      createdAt,
+    };
+  }
+
+  if (normalizedStatus === 'approved') {
+    return {
+      id: `verification-${item.id}`,
+      kind: 'verification',
+      badge: 'VF',
+      title: 'Verification approved',
+      subtitle: formatRelativeTime(createdAt),
+      createdAt,
+    };
+  }
+
+  if (normalizedStatus === 'rejected') {
+    return {
+      id: `verification-${item.id}`,
+      kind: 'verification',
+      badge: 'VF',
+      title: 'Verification rejected',
+      subtitle: formatRelativeTime(createdAt),
+      createdAt,
+    };
+  }
+
+  return {
+    id: `verification-${item.id}`,
+    kind: 'verification',
+    badge: 'VF',
+    title: 'Verification pending review',
+    subtitle: formatRelativeTime(createdAt),
+    createdAt,
+  };
+}
+
+function mapJobNotificationItem(item) {
+  return {
+    id: `job-${item.id}`,
+    kind: 'job',
+    badge: 'JB',
+    title: `${item?.applicantName || 'A student'} applied for ${item?.jobTitle || 'your job post'}`,
+    subtitle: formatRelativeTime(item?.createdAt),
+    createdAt: item?.createdAt || null,
+  };
+}
 
 function SidebarItem({ item, canAccess }) {
   if (!canAccess) {
@@ -46,9 +156,13 @@ function SidebarItem({ item, canAccess }) {
 export default function AppShell() {
   const navigate = useNavigate();
   const { user, isAuthenticated, isModerator, clearAuthSession } = useAuth();
+  const [recentNotifications, setRecentNotifications] = useState([]);
+  const [loadingRecentNotifications, setLoadingRecentNotifications] = useState(true);
 
   const profileName = user?.full_name || user?.name || 'Guest User';
   const roleLabel = user?.role ? String(user.role) : 'guest';
+  const normalizedRole = String(user?.role || '').toLowerCase();
+  const isAlumni = normalizedRole === 'alumni';
   const initials = profileName
     .split(' ')
     .filter(Boolean)
@@ -60,6 +174,74 @@ export default function AppShell() {
     clearAuthSession();
     navigate('/login');
   }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let isMounted = true;
+
+    async function loadRecentNotifications() {
+      setLoadingRecentNotifications(true);
+      const allItems = [];
+
+      try {
+        const announcementsResult = await apiRequest('/posts/feed?type=ANNOUNCEMENT&status=published&limit=8&offset=0', {
+          signal: controller.signal,
+        });
+        const announcements = Array.isArray(announcementsResult?.data) ? announcementsResult.data : [];
+        allItems.push(...announcements.map(mapAnnouncementItem));
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          console.warn('Could not load announcement notifications', error);
+        }
+      }
+
+      if (isAuthenticated && (isModerator || isAlumni)) {
+        try {
+          const statusParam = isModerator ? 'pending' : 'all';
+          const verificationResult = await apiRequest(`/users/notifications/alumni-verifications?status=${statusParam}&limit=10`, {
+            signal: controller.signal,
+          });
+          const items = Array.isArray(verificationResult?.data) ? verificationResult.data : [];
+          allItems.push(...items.map((item) => mapVerificationItem(item, isModerator)));
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            console.warn('Could not load verification notifications', error);
+          }
+        }
+      }
+
+      if (isAuthenticated && user?.id) {
+        try {
+          const jobItems = await getUnreadJobApplicationNotificationsForUser(user.id, { signal: controller.signal });
+          allItems.push(...jobItems.map(mapJobNotificationItem));
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            console.warn('Could not load job notifications', error);
+          }
+        }
+      }
+
+      if (!isMounted) return;
+
+      const sorted = allItems
+        .slice()
+        .sort((a, b) => {
+          const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return bTime - aTime;
+        })
+        .slice(0, 5);
+
+      setRecentNotifications(sorted);
+      setLoadingRecentNotifications(false);
+    }
+
+    loadRecentNotifications();
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, [isAuthenticated, isModerator, isAlumni, user?.id]);
 
   return (
     <div className="social-shell">
@@ -157,21 +339,44 @@ export default function AppShell() {
           <section className="panel sidebar-panel compact-panel">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Group chats</p>
+                <p className="eyebrow">Notifications</p>
                 <h3>Recent</h3>
               </div>
             </div>
 
             <div className="contact-list">
-              {GROUP_CHATS.map((group) => (
-                <div className="contact-item" key={group.id}>
-                  <span className="contact-avatar contact-avatar-group" aria-hidden="true">#</span>
+              {loadingRecentNotifications ? (
+                <div className="contact-item">
+                  <span className="contact-avatar contact-avatar-group" aria-hidden="true">..</span>
                   <div>
-                    <strong>{group.label}</strong>
-                    <small>{group.status}</small>
+                    <strong>Loading notifications</strong>
+                    <small>Fetching latest updates</small>
                   </div>
                 </div>
-              ))}
+              ) : recentNotifications.length === 0 ? (
+                <div className="contact-item">
+                  <span className="contact-avatar contact-avatar-group" aria-hidden="true">NA</span>
+                  <div>
+                    <strong>No recent notifications</strong>
+                    <small>You're all caught up</small>
+                  </div>
+                </div>
+              ) : (
+                recentNotifications.map((item) => (
+                  <button
+                    type="button"
+                    className={`contact-item contact-item-action notif-${item.kind || 'neutral'}`}
+                    key={item.id}
+                    onClick={() => navigate('/notifications')}
+                  >
+                    <span className="contact-avatar contact-avatar-group" aria-hidden="true">{item.badge}</span>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <small>{item.subtitle}</small>
+                    </div>
+                  </button>
+                ))
+              )}
             </div>
           </section>
         </aside>
