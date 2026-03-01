@@ -6,12 +6,12 @@ import { getUnreadJobApplicationNotificationsForUser } from '../../utils/jobPort
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const FEED_SECTIONS = [
-  { key: 'home', label: 'Home', to: '/home', hint: 'Main feed', roles: 'all', icon: 'HM' },
-  { key: 'jobs', label: 'Job Portal', to: '/job-portal', hint: 'Career posts', roles: 'all', icon: 'JB' },
-  { key: 'events', label: 'Events', to: '/events', hint: 'Campus events', roles: 'all', icon: 'EV' },
-  { key: 'collaborate', label: 'Collaborate', to: '/collaborate', hint: 'Teams & invites', roles: 'all', icon: 'CO' },
-  { key: 'moderation', label: 'Moderation', to: '/moderation', hint: 'Admin / Faculty', roles: ['admin', 'faculty'], icon: 'MD' },
-  { key: 'newsletter', label: 'Newsletter', to: '/newsletter', hint: 'Curation flow', roles: 'all', icon: 'NW' },
+  { key: 'home', label: 'Home', to: '/home', hint: 'Main feed', roles: 'all'},
+  { key: 'jobs', label: 'Job Portal', to: '/job-portal', hint: 'Career posts', roles: 'all'},
+  { key: 'events', label: 'Events', to: '/events', hint: 'Campus events', roles: 'all'},
+  { key: 'collaborate', label: 'Collaborate', to: '/collaborate', hint: 'Teams & invites', roles: 'all'},
+  { key: 'moderation', label: 'Moderation', to: '/moderation', hint: 'Admin / Faculty', roles: ['admin', 'faculty']},
+  { key: 'newsletter', label: 'Newsletter', to: '/newsletter', hint: 'Curation flow', roles: 'all'},
 ];
 
 async function apiRequest(path, options = {}) {

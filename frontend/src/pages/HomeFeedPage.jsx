@@ -668,7 +668,6 @@ export default function HomeFeedPage() {
               <p className="eyebrow">Create</p>
               <h3>New Feed Post</h3>
             </div>
-            <span className="pill pill-ghost">POST /posts/posts</span>
           </div>
 
           {!isAuthenticated && (
