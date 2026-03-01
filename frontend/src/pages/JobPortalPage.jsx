@@ -53,6 +53,29 @@ function formatDate(value) {
   }).format(date);
 }
 
+function getBaseVoteScore(post) {
+  const value = Number(
+    post?.score
+    ?? post?.voteScore
+    ?? post?.upvotes
+    ?? post?.upvoteCount
+    ?? post?.votes,
+  );
+  if (!Number.isFinite(value)) return 0;
+  return Math.trunc(value);
+}
+
+function getCommentCount(post) {
+  if (Array.isArray(post?.comments)) return post.comments.length;
+  const value = Number(
+    post?.commentCount
+    ?? post?.commentsCount
+    ?? post?.totalComments,
+  );
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.trunc(value));
+}
+
 export default function JobPortalPage() {
   const { token, isAuthenticated, user, setAuthSession } = useAuth();
   const [feedItems, setFeedItems] = useState([]);
@@ -65,6 +88,12 @@ export default function JobPortalPage() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [verificationStatus, setVerificationStatus] = useState('not_submitted');
   const [loadingVerification, setLoadingVerification] = useState(false);
+  const [actionBusyPostId, setActionBusyPostId] = useState(null);
+  const [openCommentsPostId, setOpenCommentsPostId] = useState(null);
+  const [commentsByPostId, setCommentsByPostId] = useState({});
+  const [commentsLoadingPostId, setCommentsLoadingPostId] = useState(null);
+  const [commentsSubmittingPostId, setCommentsSubmittingPostId] = useState(null);
+  const [commentDrafts, setCommentDrafts] = useState({});
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim().toLowerCase();
@@ -76,9 +105,20 @@ export default function JobPortalPage() {
   const canCreateJobPost = isAuthenticated && (isFacultyOrAdmin || (isAlumni && effectiveVerificationStatus === 'approved'));
 
   const filteredFeedItems = useMemo(() => {
-    if (!activeSearch) return feedItems;
+    const visiblePosts = feedItems
+      .filter((post) => String(post?.status || '').toLowerCase() !== 'archived')
+      .slice()
+      .sort((a, b) => {
+        const voteDelta = getBaseVoteScore(b) - getBaseVoteScore(a);
+        if (voteDelta !== 0) return voteDelta;
+        const createdAtA = Number(new Date(a?.createdAt || 0));
+        const createdAtB = Number(new Date(b?.createdAt || 0));
+        return createdAtB - createdAtA;
+      });
 
-    return feedItems.filter((post) => {
+    if (!activeSearch) return visiblePosts;
+
+    return visiblePosts.filter((post) => {
       const details = getJobDetailsFromPost(post);
       const searchable = [
         details.jobTitle,
@@ -193,9 +233,171 @@ export default function JobPortalPage() {
     setPostForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  function updatePostEngagement(postId, patch) {
+    setFeedItems((prev) => prev.map((item) => {
+      if (item.id !== postId) return item;
+      return { ...item, ...patch };
+    }));
+  }
+
   function isPostOwner(post) {
     if (!post?.authorId || !user?.id) return false;
     return String(post.authorId) === String(user.id);
+  }
+
+  async function patchPost(postId, payload, successMessage) {
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to update posts.' });
+      return;
+    }
+
+    setActionBusyPostId(postId);
+    try {
+      await apiRequest(`/posts/posts/${postId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      setBanner({ type: 'success', message: successMessage });
+      refreshFeed();
+    } catch (error) {
+      setBanner({ type: 'error', message: `Post update failed: ${error.message}` });
+    } finally {
+      setActionBusyPostId(null);
+    }
+  }
+
+  async function handleVote(post, direction) {
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to vote on job posts.' });
+      return;
+    }
+
+    const currentVote = post?.userVote === 'up' ? 'up' : post?.userVote === 'down' ? 'down' : null;
+    const nextVote = currentVote === direction ? 'none' : direction;
+    const beforeScore = getBaseVoteScore(post);
+    const beforeUpvoteCount = Number.isFinite(Number(post?.upvoteCount)) ? Math.max(0, Math.trunc(Number(post.upvoteCount))) : 0;
+    const beforeDownvoteCount = Number.isFinite(Number(post?.downvoteCount)) ? Math.max(0, Math.trunc(Number(post.downvoteCount))) : 0;
+
+    const currentNumeric = currentVote === 'up' ? 1 : currentVote === 'down' ? -1 : 0;
+    const nextNumeric = nextVote === 'up' ? 1 : nextVote === 'down' ? -1 : 0;
+    const delta = nextNumeric - currentNumeric;
+
+    updatePostEngagement(post.id, {
+      score: beforeScore + delta,
+      voteScore: beforeScore + delta,
+      upvoteCount: beforeUpvoteCount + (nextNumeric === 1 ? 1 : 0) - (currentNumeric === 1 ? 1 : 0),
+      downvoteCount: beforeDownvoteCount + (nextNumeric === -1 ? 1 : 0) - (currentNumeric === -1 ? 1 : 0),
+      userVote: nextNumeric === 1 ? 'up' : nextNumeric === -1 ? 'down' : null,
+    });
+
+    setActionBusyPostId(post.id);
+    try {
+      const result = await apiRequest(`/posts/posts/${post.id}/vote`, {
+        method: 'POST',
+        body: JSON.stringify({ vote: nextVote }),
+      });
+
+      const payload = result?.data || {};
+      updatePostEngagement(post.id, {
+        score: Number.isFinite(Number(payload.score)) ? Math.trunc(Number(payload.score)) : beforeScore,
+        voteScore: Number.isFinite(Number(payload.voteScore)) ? Math.trunc(Number(payload.voteScore)) : beforeScore,
+        upvoteCount: Number.isFinite(Number(payload.upvoteCount)) ? Math.max(0, Math.trunc(Number(payload.upvoteCount))) : beforeUpvoteCount,
+        downvoteCount: Number.isFinite(Number(payload.downvoteCount)) ? Math.max(0, Math.trunc(Number(payload.downvoteCount))) : beforeDownvoteCount,
+        userVote: payload.userVote === 'up' ? 'up' : payload.userVote === 'down' ? 'down' : null,
+      });
+    } catch (error) {
+      updatePostEngagement(post.id, {
+        score: beforeScore,
+        voteScore: beforeScore,
+        upvoteCount: beforeUpvoteCount,
+        downvoteCount: beforeDownvoteCount,
+        userVote: currentVote,
+      });
+      setBanner({ type: 'error', message: `Vote failed: ${error.message}` });
+    } finally {
+      setActionBusyPostId(null);
+    }
+  }
+
+  async function loadComments(postId, options = {}) {
+    const { openAfterLoad = true } = options;
+    setCommentsLoadingPostId(postId);
+    try {
+      const result = await apiRequest(`/posts/posts/${postId}/comments?limit=100&offset=0`);
+      const comments = Array.isArray(result?.data) ? result.data : [];
+      const total = Number(result?.pagination?.total);
+      setCommentsByPostId((prev) => ({ ...prev, [postId]: comments }));
+      updatePostEngagement(postId, {
+        commentCount: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : comments.length,
+        commentsCount: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : comments.length,
+      });
+      if (openAfterLoad) {
+        setOpenCommentsPostId(postId);
+      }
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not load comments: ${error.message}` });
+    } finally {
+      setCommentsLoadingPostId(null);
+    }
+  }
+
+  async function toggleComments(post) {
+    if (openCommentsPostId === post.id) {
+      setOpenCommentsPostId(null);
+      return;
+    }
+
+    if (Array.isArray(commentsByPostId[post.id])) {
+      setOpenCommentsPostId(post.id);
+      return;
+    }
+
+    await loadComments(post.id, { openAfterLoad: true });
+  }
+
+  async function submitComment(postId) {
+    const draftValue = commentDrafts[postId] || '';
+    const content = draftValue.trim();
+    if (!content) return;
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to comment on job posts.' });
+      return;
+    }
+
+    setCommentsSubmittingPostId(postId);
+    try {
+      const result = await apiRequest(`/posts/posts/${postId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      });
+
+      const createdComment = result?.data;
+      if (createdComment) {
+        setCommentsByPostId((prev) => ({
+          ...prev,
+          [postId]: [createdComment, ...(Array.isArray(prev[postId]) ? prev[postId] : [])],
+        }));
+      }
+      setCommentDrafts((prev) => ({ ...prev, [postId]: '' }));
+
+      const backendCount = Number(result?.meta?.commentCount);
+      if (Number.isFinite(backendCount)) {
+        updatePostEngagement(postId, {
+          commentCount: Math.max(0, Math.trunc(backendCount)),
+          commentsCount: Math.max(0, Math.trunc(backendCount)),
+        });
+      } else {
+        setFeedItems((prev) => prev.map((item) => {
+          if (item.id !== postId) return item;
+          const nextCount = getCommentCount(item) + 1;
+          return { ...item, commentCount: nextCount, commentsCount: nextCount };
+        }));
+      }
+    } catch (error) {
+      setBanner({ type: 'error', message: `Comment failed: ${error.message}` });
+    } finally {
+      setCommentsSubmittingPostId(null);
+    }
   }
 
   async function handleCreatePost(event) {
@@ -471,6 +673,107 @@ export default function JobPortalPage() {
                   </div>
 
                   <p className="job-card-description">{details.jobDescription}</p>
+
+                  <div className="feed-card-actions social-actions reddit-action-row job-post-social-actions">
+                    <div className="reddit-vote-group" role="group" aria-label={`Voting controls for ${details.jobTitle}`}>
+                      <button
+                        className={`reddit-action-btn vote-btn ${item.userVote === 'up' ? 'is-active' : ''}`}
+                        type="button"
+                        aria-pressed={item.userVote === 'up'}
+                        disabled={actionBusyPostId === item.id || item.status === 'archived'}
+                        onClick={() => handleVote(item, 'up')}
+                      >
+                        Upvote
+                      </button>
+                      <span className="reddit-vote-count" aria-live="polite">{getBaseVoteScore(item)}</span>
+                      <button
+                        className={`reddit-action-btn vote-btn ${item.userVote === 'down' ? 'is-active' : ''}`}
+                        type="button"
+                        aria-pressed={item.userVote === 'down'}
+                        disabled={actionBusyPostId === item.id || item.status === 'archived'}
+                        onClick={() => handleVote(item, 'down')}
+                      >
+                        Downvote
+                      </button>
+                    </div>
+
+                    <button
+                      className="reddit-action-btn"
+                      type="button"
+                      aria-expanded={openCommentsPostId === item.id}
+                      onClick={() => toggleComments(item)}
+                    >
+                      Comments {getCommentCount(item)}
+                    </button>
+
+                    <button
+                      className="reddit-action-btn archive-action"
+                      type="button"
+                      disabled={actionBusyPostId === item.id || !isAuthenticated || (!isOwner && !isFacultyOrAdmin) || item.status === 'archived'}
+                      onClick={() => patchPost(item.id, { archive: true }, 'Job post archived.')}
+                    >
+                      Archive
+                    </button>
+                  </div>
+
+                  {openCommentsPostId === item.id && (
+                    <section className="post-comments-panel" aria-label="Comments section">
+                      <div className="post-comments-header">
+                        <h5>Comments</h5>
+                        <button
+                          className="btn btn-soft"
+                          type="button"
+                          disabled={commentsLoadingPostId === item.id}
+                          onClick={() => loadComments(item.id, { openAfterLoad: false })}
+                        >
+                          {commentsLoadingPostId === item.id ? 'Refreshing...' : 'Refresh'}
+                        </button>
+                      </div>
+
+                      {commentsLoadingPostId === item.id ? (
+                        <p className="post-comments-hint">Loading comments...</p>
+                      ) : Array.isArray(commentsByPostId[item.id]) && commentsByPostId[item.id].length > 0 ? (
+                        <ul className="post-comments-list" aria-label="Post comments">
+                          {commentsByPostId[item.id].map((comment) => (
+                            <li key={comment.id} className="post-comment-item">
+                              <div className="post-comment-head">
+                                <strong>{comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}</strong>
+                                <small>{formatDate(comment.createdAt)}</small>
+                              </div>
+                              <p>{comment.content}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="post-comments-hint">No comments yet. Start the discussion.</p>
+                      )}
+
+                      <form
+                        className="post-comment-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          submitComment(item.id);
+                        }}
+                      >
+                        <textarea
+                          rows={2}
+                          placeholder={isAuthenticated ? 'Write a comment...' : 'Sign in to write a comment'}
+                          value={commentDrafts[item.id] || ''}
+                          onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
+                          disabled={commentsSubmittingPostId === item.id || !isAuthenticated}
+                        />
+                        <div className="post-comment-form-actions">
+                          <button
+                            className="btn btn-primary-solid"
+                            type="submit"
+                            disabled={commentsSubmittingPostId === item.id || !isAuthenticated || !(commentDrafts[item.id] || '').trim()}
+                          >
+                            {commentsSubmittingPostId === item.id ? 'Posting...' : 'Post Comment'}
+                          </button>
+                        </div>
+                      </form>
+                    </section>
+                  )}
 
                   <footer className="feed-card-actions social-actions job-card-actions">
                     {!isOwner && (
