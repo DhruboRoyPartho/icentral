@@ -109,6 +109,12 @@ function toLocalDateTimeInput(isoString) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function toTitleCase(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+}
+
 export default function HomeFeedPage() {
   const { isAuthenticated, isModerator, user } = useAuth();
   const imageInputRef = useRef(null);
@@ -396,6 +402,18 @@ export default function HomeFeedPage() {
     }
   }
 
+  const storyItems = feedItems.slice(0, 8).map((item, index) => {
+    const imageRef = Array.isArray(item.refs)
+      ? item.refs.find((ref) => ref?.service === 'image-upload' && ref?.metadata?.imageDataUrl)
+      : null;
+    return {
+      id: item.id || `story-${index}`,
+      imageUrl: imageRef?.metadata?.imageDataUrl || '',
+      title: item.title || `${toTitleCase(item.type || 'post')} update`,
+      authorLabel: item.authorId ? `Author ${String(item.authorId).slice(0, 8)}` : 'Community',
+    };
+  });
+
   return (
     <div className="home-feed-page">
       {banner.message && (
@@ -552,7 +570,7 @@ export default function HomeFeedPage() {
                         title={`Remove ${tag.name}`}
                       >
                         <span>{tag.name}</span>
-                        <strong aria-hidden="true">×</strong>
+                        <strong aria-hidden="true">x</strong>
                       </button>
                     ))}
                   </div>
@@ -578,6 +596,31 @@ export default function HomeFeedPage() {
           </form>
         </section>
 
+      </section>
+
+      <section className="story-strip" aria-label="Stories">
+        {storyItems.length === 0 ? (
+          <article className="story-card story-card-empty">
+            <div className="story-overlay">
+              <strong>No stories yet</strong>
+              <small>Create a post to populate this section.</small>
+            </div>
+          </article>
+        ) : (
+          storyItems.map((story) => (
+            <article className="story-card" key={story.id}>
+              {story.imageUrl ? (
+                <img src={story.imageUrl} alt={story.title} loading="lazy" />
+              ) : (
+                <div className="story-fallback-bg" aria-hidden="true" />
+              )}
+              <div className="story-overlay">
+                <strong>{story.title}</strong>
+                <small>{story.authorLabel}</small>
+              </div>
+            </article>
+          ))
+        )}
       </section>
 
       <section className="panel feed-panel">
