@@ -446,6 +446,45 @@ export default function HomeFeedPage() {
     }
   }
 
+  async function deletePost(post) {
+    const postId = post?.id;
+    if (!postId) return;
+
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to delete posts.' });
+      return;
+    }
+
+    const canDelete = isModerator || isPostOwner(post);
+    if (!canDelete) {
+      setBanner({ type: 'error', message: 'Only faculty/admin or the original author can delete this post.' });
+      return;
+    }
+
+    const title = (post?.title || '').trim();
+    const label = title || `${toTitleCase(post?.type || 'post')} post`;
+    const confirmed = window.confirm(`Delete "${label}" permanently?`);
+    if (!confirmed) return;
+
+    setActionBusyPostId(postId);
+    try {
+      await apiRequest(`/posts/posts/${postId}`, { method: 'DELETE' });
+      setBanner({ type: 'success', message: 'Post deleted.' });
+      if (openCommentsPostId === postId) setOpenCommentsPostId(null);
+      setCommentsByPostId((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, postId)) return prev;
+        const next = { ...prev };
+        delete next[postId];
+        return next;
+      });
+      refreshFeed();
+    } catch (error) {
+      setBanner({ type: 'error', message: `Post delete failed: ${error.message}` });
+    } finally {
+      setActionBusyPostId(null);
+    }
+  }
+
   function updatePostEngagement(postId, patch) {
     setFeedItems((prev) => prev.map((item) => {
       if (item.id !== postId) return item;
@@ -998,14 +1037,27 @@ export default function HomeFeedPage() {
                     Comments {getCommentCount(item)}
                   </button>
 
-                  <button
-                    className="reddit-action-btn archive-action"
-                    type="button"
-                    disabled={actionBusyPostId === item.id || !isAuthenticated || (!isModerator && item.status === 'archived')}
-                    onClick={() => patchPost(item.id, { archive: true }, 'Post archived.')}
-                  >
-                    Archive
-                  </button>
+                  {(isModerator || isPostOwner(item)) && (
+                    <button
+                      className="reddit-action-btn archive-action"
+                      type="button"
+                      disabled={actionBusyPostId === item.id || !isAuthenticated || item.status === 'archived'}
+                      onClick={() => patchPost(item.id, { archive: true }, 'Post archived.')}
+                    >
+                      Archive
+                    </button>
+                  )}
+
+                  {(isModerator || isPostOwner(item)) && (
+                    <button
+                      className="reddit-action-btn delete-action"
+                      type="button"
+                      disabled={actionBusyPostId === item.id || !isAuthenticated}
+                      onClick={() => deletePost(item)}
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
 
                 {openCommentsPostId === item.id && (

@@ -2196,6 +2196,17 @@
   background: rgba(75, 22, 24, 0.8);
 }
 
+.reddit-action-btn.delete-action {
+  border-color: rgba(255, 90, 90, 0.45);
+  color: #ffd9d9;
+  background: rgba(88, 20, 24, 0.72);
+}
+
+.reddit-action-btn.delete-action:hover:not(:disabled) {
+  border-color: rgba(255, 120, 120, 0.62);
+  background: rgba(106, 22, 28, 0.86);
+}
+
 .post-comments-panel {
   border: 1px solid rgba(176, 226, 255, 0.14);
   background: rgba(7, 19, 29, 0.72);

@@ -290,6 +290,45 @@ export default function JobPortalPage() {
     }
   }
 
+  async function deletePost(post) {
+    const postId = post?.id;
+    if (!postId) return;
+
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to delete posts.' });
+      return;
+    }
+
+    const canDelete = isFacultyOrAdmin || isPostOwner(post);
+    if (!canDelete) {
+      setBanner({ type: 'error', message: 'Only faculty/admin or the original author can delete this post.' });
+      return;
+    }
+
+    const details = getJobDetailsFromPost(post);
+    const label = (details.jobTitle || '').trim() || 'job post';
+    const confirmed = window.confirm(`Delete "${label}" permanently?`);
+    if (!confirmed) return;
+
+    setActionBusyPostId(postId);
+    try {
+      await apiRequest(`/posts/posts/${postId}`, { method: 'DELETE' });
+      setBanner({ type: 'success', message: 'Job post deleted.' });
+      if (openCommentsPostId === postId) setOpenCommentsPostId(null);
+      setCommentsByPostId((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, postId)) return prev;
+        const next = { ...prev };
+        delete next[postId];
+        return next;
+      });
+      refreshFeed();
+    } catch (error) {
+      setBanner({ type: 'error', message: `Post delete failed: ${error.message}` });
+    } finally {
+      setActionBusyPostId(null);
+    }
+  }
+
   async function handleVote(post, direction) {
     if (!isAuthenticated) {
       setBanner({ type: 'error', message: 'Sign in to vote on job posts.' });
@@ -738,14 +777,27 @@ export default function JobPortalPage() {
                       Comments {getCommentCount(item)}
                     </button>
 
-                    <button
-                      className="reddit-action-btn archive-action"
-                      type="button"
-                      disabled={actionBusyPostId === item.id || !isAuthenticated || (!isOwner && !isFacultyOrAdmin) || item.status === 'archived'}
-                      onClick={() => patchPost(item.id, { archive: true }, 'Job post archived.')}
-                    >
-                      Archive
-                    </button>
+                    {(isFacultyOrAdmin || isOwner) && (
+                      <button
+                        className="reddit-action-btn archive-action"
+                        type="button"
+                        disabled={actionBusyPostId === item.id || !isAuthenticated || item.status === 'archived'}
+                        onClick={() => patchPost(item.id, { archive: true }, 'Job post archived.')}
+                      >
+                        Archive
+                      </button>
+                    )}
+
+                    {(isFacultyOrAdmin || isOwner) && (
+                      <button
+                        className="reddit-action-btn delete-action"
+                        type="button"
+                        disabled={actionBusyPostId === item.id || !isAuthenticated}
+                        onClick={() => deletePost(item)}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
 
                   {openCommentsPostId === item.id && (

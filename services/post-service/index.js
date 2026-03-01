@@ -822,6 +822,7 @@ app.get('/', (req, res) => {
             'GET /posts/:id',
             'POST /posts',
             'PATCH /posts/:id',
+            'DELETE /posts/:id',
             'POST /posts/:id/vote',
             'GET /posts/:id/comments',
             'POST /posts/:id/comments',
@@ -1055,11 +1056,33 @@ app.patch('/posts/:id', ensureDb, async (req, res) => {
         const hasTagChanges = payload.tagsProvided;
         const hasRefChanges = payload.refProvided;
         const isExpiryUpdate = Object.prototype.hasOwnProperty.call(payload.postFields, 'expires_at');
+        const isStatusUpdate = Object.prototype.hasOwnProperty.call(payload.postFields, 'status');
+        const normalizedNextStatus = isStatusUpdate
+            ? String(payload.postFields.status || '').trim().toLowerCase()
+            : '';
+        const isArchiveUpdate = isStatusUpdate && normalizedNextStatus === 'archived';
 
         if (!hasPostFields && !hasTagChanges && !hasRefChanges) {
             return res.status(400).json({
                 error: 'No supported fields provided for update',
             });
+        }
+
+        if (isArchiveUpdate) {
+            const requestUser = getRequestUser(req);
+            if (!requestUser?.id) {
+                return res.status(401).json({ error: 'Authentication is required to archive posts.' });
+            }
+            if (!isModeratorRole(requestUser.role)) {
+                const authorId = await getPostAuthorId(req.params.id);
+                if (authorId === null) {
+                    return res.status(404).json({ error: 'Post not found' });
+                }
+
+                if (!authorId || String(authorId) !== String(requestUser.id)) {
+                    return res.status(403).json({ error: 'Only faculty/admin or the original author can archive posts.' });
+                }
+            }
         }
 
         if (isExpiryUpdate) {
@@ -1117,6 +1140,47 @@ app.patch('/posts/:id', ensureDb, async (req, res) => {
             data: fullPost,
         });
     } catch (error) {
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.delete('/posts/:id', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const postId = normalizeText(req.params.id);
+        if (!postId) {
+            return res.status(400).json({ error: 'post id is required' });
+        }
+
+        const postMeta = await getPostMetaById(postId);
+        if (!postMeta) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+
+        const isOwner = String(postMeta.author_id || '') === String(req.requestUser.id || '');
+        if (!isOwner && !isModeratorRole(req.requestUser.role)) {
+            return res.status(403).json({ error: 'Only faculty/admin or the original author can delete this post.' });
+        }
+
+        const { data: deletedRows, error: deleteError } = await supabase
+            .from(CONFIG.tables.posts)
+            .delete()
+            .eq('id', postId)
+            .select('id');
+
+        if (deleteError) {
+            throw deleteError;
+        }
+
+        if (!Array.isArray(deletedRows) || deletedRows.length === 0) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+
+        return res.json({
+            message: 'Post deleted',
+            data: { id: postId },
+        });
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
         return res.status(500).json({ error: formatSupabaseError(error) });
     }
 });
