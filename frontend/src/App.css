@@ -875,15 +875,14 @@
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 4px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .story-strip::-webkit-scrollbar {
-  height: 7px;
-}
-
-.story-strip::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgba(176, 226, 255, 0.2);
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .story-card {
@@ -1752,45 +1751,45 @@
 
 .job-portal-top-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   align-items: start;
 }
 
 .job-composer-panel {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .job-create-form {
-  gap: 12px;
+  gap: 10px;
 }
 
 .job-form-block {
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid rgba(176, 226, 255, 0.12);
   background: rgba(255, 255, 255, 0.02);
-  padding: 14px;
+  padding: 12px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .job-form-block-head {
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
 .job-form-block-head h3,
 .job-form-block-head h4 {
   margin: 0;
   color: var(--txt);
-  font-size: 1.04rem;
+  font-size: 1rem;
 }
 
 .job-composer-footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -1799,40 +1798,6 @@
   color: var(--muted);
   font-size: 0.82rem;
   max-width: 56ch;
-}
-
-.job-side-guidance {
-  display: grid;
-  gap: 12px;
-}
-
-.job-side-guidance-block {
-  border-radius: 14px;
-  border: 1px solid rgba(176, 226, 255, 0.16);
-  background: rgba(255, 255, 255, 0.02);
-  padding: 12px;
-  display: grid;
-  gap: 8px;
-}
-
-.job-side-guidance-block h4 {
-  margin: 0;
-  color: var(--txt);
-}
-
-.job-side-guidance-block p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.45;
-}
-
-.job-guidance-list {
-  margin: 0;
-  padding-left: 18px;
-  display: grid;
-  gap: 6px;
-  color: #d8eaf6;
-  font-size: 0.9rem;
 }
 
 .job-feed-panel {
@@ -2125,6 +2090,190 @@
 
 .social-actions .btn {
   flex: 1 1 140px;
+}
+
+.reddit-action-row {
+  align-items: center;
+  gap: 10px;
+}
+
+.reddit-vote-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(176, 226, 255, 0.18);
+  background: rgba(10, 23, 34, 0.92);
+  padding: 4px;
+}
+
+.reddit-action-btn {
+  border: 1px solid rgba(176, 226, 255, 0.16);
+  background: rgba(10, 23, 34, 0.92);
+  color: #d6e9f6;
+  border-radius: 999px;
+  min-height: 36px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.reddit-action-btn:hover:not(:disabled) {
+  border-color: rgba(111, 251, 224, 0.45);
+  background: rgba(15, 34, 49, 0.94);
+}
+
+.reddit-action-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.reddit-action-btn.vote-btn {
+  min-width: 92px;
+}
+
+.reddit-action-btn.is-active {
+  border-color: rgba(111, 251, 224, 0.5);
+  background: rgba(0, 209, 178, 0.18);
+  color: #cafff5;
+}
+
+.reddit-vote-count {
+  min-width: 44px;
+  text-align: center;
+  color: #e8f5fc;
+  font-weight: 700;
+}
+
+.reddit-action-btn.archive-action {
+  margin-left: auto;
+  border-color: rgba(255, 122, 122, 0.3);
+  color: #ffd4d4;
+}
+
+.reddit-action-btn.archive-action:hover:not(:disabled) {
+  border-color: rgba(255, 150, 150, 0.52);
+  background: rgba(75, 22, 24, 0.8);
+}
+
+.post-comments-panel {
+  border: 1px solid rgba(176, 226, 255, 0.14);
+  background: rgba(7, 19, 29, 0.72);
+  border-radius: 12px;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.post-comments-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.post-comments-header h5 {
+  margin: 0;
+  color: var(--txt);
+  font-size: 0.86rem;
+}
+
+.post-comments-header .btn {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 0.76rem;
+}
+
+.post-comments-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.post-comments-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.post-comment-item {
+  border-radius: 10px;
+  border: 1px solid rgba(176, 226, 255, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.post-comment-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.post-comment-head strong {
+  color: #d9ecf8;
+  font-size: 0.82rem;
+}
+
+.post-comment-head small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.post-comment-item p {
+  margin: 0;
+  color: #c8dde8;
+  line-height: 1.34;
+  font-size: 0.87rem;
+  white-space: pre-wrap;
+}
+
+.post-comment-form {
+  display: grid;
+  gap: 6px;
+}
+
+.post-comment-form textarea {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(176, 226, 255, 0.18);
+  background: rgba(3, 12, 20, 0.84);
+  color: var(--txt);
+  padding: 7px 9px;
+  min-height: 64px;
+  font-size: 0.88rem;
+  line-height: 1.3;
+  resize: vertical;
+}
+
+.post-comment-form textarea:focus {
+  outline: none;
+  border-color: rgba(111, 251, 224, 0.42);
+  box-shadow: 0 0 0 3px rgba(111, 251, 224, 0.12);
+}
+
+.post-comment-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.post-comment-form-actions .btn {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 0.78rem;
 }
 
 .empty-state {
@@ -2475,6 +2624,43 @@
 
   .feed-card-actions .btn {
     flex: 1 1 100%;
+  }
+
+  .reddit-action-row {
+    gap: 8px;
+  }
+
+  .reddit-vote-group {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .reddit-action-btn.vote-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .reddit-action-btn {
+    flex: 1 1 calc(50% - 4px);
+  }
+
+  .reddit-action-btn.archive-action {
+    margin-left: 0;
+  }
+
+  .post-comments-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .post-comment-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+
+  .post-comment-form-actions .btn {
+    width: 100%;
   }
 
   .job-overview-stats {

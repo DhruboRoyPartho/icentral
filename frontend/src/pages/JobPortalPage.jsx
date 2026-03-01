@@ -389,8 +389,8 @@ export default function JobPortalPage() {
               <label>
                 <span>Job Description</span>
                 <textarea
-                  rows={5}
-                  placeholder="Describe role responsibilities, must-have skills, and candidate expectations"
+                  rows={4}
+                  placeholder="Describe responsibilities, required skills, and expectations"
                   value={postForm.jobDescription}
                   onChange={(e) => updatePostField('jobDescription', e.target.value)}
                   disabled={!canCreateJobPost}
@@ -399,36 +399,12 @@ export default function JobPortalPage() {
             </div>
 
             <div className="job-composer-footer">
-              <p className="job-composer-footnote">
-                Job posts are visible in the portal feed and can receive direct student applications.
-              </p>
               <button className="btn btn-primary-solid" type="submit" disabled={submittingPost || !canCreateJobPost}>
                 {submittingPost ? 'Posting...' : 'Post Job'}
               </button>
             </div>
           </form>
         </section>
-
-        <aside className="panel job-side-guidance">
-          <div className="job-side-guidance-block">
-            <p className="eyebrow">Posting Status</p>
-            <h4>{canCreateJobPost ? 'You can post now' : 'Posting currently restricted'}</h4>
-            <p>
-              {canCreateJobPost
-                ? 'Your account currently has permission to publish opportunities in the Job Portal.'
-                : 'Posting requires verified alumni status or faculty/admin role.'}
-            </p>
-          </div>
-
-          <div className="job-side-guidance-block">
-            <p className="eyebrow">Recommended Quality</p>
-            <ul className="job-guidance-list">
-              <li>Keep title specific and searchable.</li>
-              <li>Include clear salary range and expectations.</li>
-              <li>Use concise, outcome-focused role description.</li>
-            </ul>
-          </div>
-        </aside>
       </section>
 
       <section className="panel feed-panel job-feed-panel">

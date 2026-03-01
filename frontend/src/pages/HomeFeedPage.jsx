@@ -101,18 +101,33 @@ function statusTone(status) {
   return 'neutral';
 }
 
-function toLocalDateTimeInput(isoString) {
-  if (!isoString) return '';
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 function toTitleCase(value) {
   const text = String(value || '').trim();
   if (!text) return '';
   return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+}
+
+function getBaseVoteScore(post) {
+  const value = Number(
+    post?.score
+    ?? post?.voteScore
+    ?? post?.upvotes
+    ?? post?.upvoteCount
+    ?? post?.votes,
+  );
+  if (!Number.isFinite(value)) return 0;
+  return Math.trunc(value);
+}
+
+function getCommentCount(post) {
+  if (Array.isArray(post?.comments)) return post.comments.length;
+  const value = Number(
+    post?.commentCount
+    ?? post?.commentsCount
+    ?? post?.totalComments,
+  );
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.trunc(value));
 }
 
 export default function HomeFeedPage() {
@@ -131,6 +146,11 @@ export default function HomeFeedPage() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [tagSearchInput, setTagSearchInput] = useState('');
   const [composerImage, setComposerImage] = useState(null);
+  const [openCommentsPostId, setOpenCommentsPostId] = useState(null);
+  const [commentsByPostId, setCommentsByPostId] = useState({});
+  const [commentsLoadingPostId, setCommentsLoadingPostId] = useState(null);
+  const [commentsSubmittingPostId, setCommentsSubmittingPostId] = useState(null);
+  const [commentDrafts, setCommentDrafts] = useState({});
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
@@ -402,17 +422,171 @@ export default function HomeFeedPage() {
     }
   }
 
-  const storyItems = feedItems.slice(0, 8).map((item, index) => {
-    const imageRef = Array.isArray(item.refs)
-      ? item.refs.find((ref) => ref?.service === 'image-upload' && ref?.metadata?.imageDataUrl)
-      : null;
-    return {
-      id: item.id || `story-${index}`,
-      imageUrl: imageRef?.metadata?.imageDataUrl || '',
-      title: item.title || `${toTitleCase(item.type || 'post')} update`,
-      authorLabel: item.authorId ? `Author ${String(item.authorId).slice(0, 8)}` : 'Community',
-    };
-  });
+  function updatePostEngagement(postId, patch) {
+    setFeedItems((prev) => prev.map((item) => {
+      if (item.id !== postId) return item;
+      return { ...item, ...patch };
+    }));
+  }
+
+  async function handleVote(post, direction) {
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to vote on posts.' });
+      return;
+    }
+
+    const currentVote = post?.userVote === 'up' ? 'up' : post?.userVote === 'down' ? 'down' : null;
+    const nextVote = currentVote === direction ? 'none' : direction;
+    const beforeScore = getBaseVoteScore(post);
+    const beforeUpvoteCount = Number.isFinite(Number(post?.upvoteCount)) ? Math.max(0, Math.trunc(Number(post.upvoteCount))) : 0;
+    const beforeDownvoteCount = Number.isFinite(Number(post?.downvoteCount)) ? Math.max(0, Math.trunc(Number(post.downvoteCount))) : 0;
+
+    const currentNumeric = currentVote === 'up' ? 1 : currentVote === 'down' ? -1 : 0;
+    const nextNumeric = nextVote === 'up' ? 1 : nextVote === 'down' ? -1 : 0;
+    const delta = nextNumeric - currentNumeric;
+
+    updatePostEngagement(post.id, {
+      score: beforeScore + delta,
+      voteScore: beforeScore + delta,
+      upvoteCount: beforeUpvoteCount + (nextNumeric === 1 ? 1 : 0) - (currentNumeric === 1 ? 1 : 0),
+      downvoteCount: beforeDownvoteCount + (nextNumeric === -1 ? 1 : 0) - (currentNumeric === -1 ? 1 : 0),
+      userVote: nextNumeric === 1 ? 'up' : nextNumeric === -1 ? 'down' : null,
+    });
+
+    setActionBusyPostId(post.id);
+    try {
+      const result = await apiRequest(`/posts/posts/${post.id}/vote`, {
+        method: 'POST',
+        body: JSON.stringify({ vote: nextVote }),
+      });
+
+      const payload = result?.data || {};
+      updatePostEngagement(post.id, {
+        score: Number.isFinite(Number(payload.score)) ? Math.trunc(Number(payload.score)) : beforeScore,
+        voteScore: Number.isFinite(Number(payload.voteScore)) ? Math.trunc(Number(payload.voteScore)) : beforeScore,
+        upvoteCount: Number.isFinite(Number(payload.upvoteCount)) ? Math.max(0, Math.trunc(Number(payload.upvoteCount))) : beforeUpvoteCount,
+        downvoteCount: Number.isFinite(Number(payload.downvoteCount)) ? Math.max(0, Math.trunc(Number(payload.downvoteCount))) : beforeDownvoteCount,
+        userVote: payload.userVote === 'up' ? 'up' : payload.userVote === 'down' ? 'down' : null,
+      });
+    } catch (error) {
+      updatePostEngagement(post.id, {
+        score: beforeScore,
+        voteScore: beforeScore,
+        upvoteCount: beforeUpvoteCount,
+        downvoteCount: beforeDownvoteCount,
+        userVote: currentVote,
+      });
+      setBanner({ type: 'error', message: `Vote failed: ${error.message}` });
+    } finally {
+      setActionBusyPostId(null);
+    }
+  }
+
+  async function loadComments(postId, options = {}) {
+    const { openAfterLoad = true } = options;
+    setCommentsLoadingPostId(postId);
+    try {
+      const result = await apiRequest(`/posts/posts/${postId}/comments?limit=100&offset=0`);
+      const comments = Array.isArray(result?.data) ? result.data : [];
+      const total = Number(result?.pagination?.total);
+      setCommentsByPostId((prev) => ({ ...prev, [postId]: comments }));
+      updatePostEngagement(postId, {
+        commentCount: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : comments.length,
+        commentsCount: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : comments.length,
+      });
+      if (openAfterLoad) {
+        setOpenCommentsPostId(postId);
+      }
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not load comments: ${error.message}` });
+    } finally {
+      setCommentsLoadingPostId(null);
+    }
+  }
+
+  async function toggleComments(post) {
+    if (openCommentsPostId === post.id) {
+      setOpenCommentsPostId(null);
+      return;
+    }
+
+    if (Array.isArray(commentsByPostId[post.id])) {
+      setOpenCommentsPostId(post.id);
+      return;
+    }
+
+    await loadComments(post.id, { openAfterLoad: true });
+  }
+
+  async function submitComment(postId) {
+    const draftValue = commentDrafts[postId] || '';
+    const content = draftValue.trim();
+    if (!content) return;
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to comment on posts.' });
+      return;
+    }
+
+    setCommentsSubmittingPostId(postId);
+    try {
+      const result = await apiRequest(`/posts/posts/${postId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      });
+
+      const createdComment = result?.data;
+      if (createdComment) {
+        setCommentsByPostId((prev) => ({
+          ...prev,
+          [postId]: [createdComment, ...(Array.isArray(prev[postId]) ? prev[postId] : [])],
+        }));
+      }
+      setCommentDrafts((prev) => ({ ...prev, [postId]: '' }));
+
+      const backendCount = Number(result?.meta?.commentCount);
+      if (Number.isFinite(backendCount)) {
+        updatePostEngagement(postId, {
+          commentCount: Math.max(0, Math.trunc(backendCount)),
+          commentsCount: Math.max(0, Math.trunc(backendCount)),
+        });
+      } else {
+        setFeedItems((prev) => prev.map((item) => {
+          if (item.id !== postId) return item;
+          const nextCount = getCommentCount(item) + 1;
+          return { ...item, commentCount: nextCount, commentsCount: nextCount };
+        }));
+      }
+    } catch (error) {
+      setBanner({ type: 'error', message: `Comment failed: ${error.message}` });
+    } finally {
+      setCommentsSubmittingPostId(null);
+    }
+  }
+
+  const storyItems = useMemo(() => (
+    feedItems
+      .filter((item) => String(item?.status || '').toLowerCase() !== 'archived')
+      .slice()
+      .sort((a, b) => {
+        const voteDelta = getBaseVoteScore(b) - getBaseVoteScore(a);
+        if (voteDelta !== 0) return voteDelta;
+        const createdAtA = Number(new Date(a?.createdAt || 0));
+        const createdAtB = Number(new Date(b?.createdAt || 0));
+        return createdAtB - createdAtA;
+      })
+      .slice(0, 8)
+      .map((item, index) => {
+        const imageRef = Array.isArray(item.refs)
+          ? item.refs.find((ref) => ref?.service === 'image-upload' && ref?.metadata?.imageDataUrl)
+          : null;
+        return {
+          id: item.id || `story-${index}`,
+          imageUrl: imageRef?.metadata?.imageDataUrl || '',
+          title: item.title || `${toTitleCase(item.type || 'post')} update`,
+          authorLabel: item.authorId ? `Author ${String(item.authorId).slice(0, 8)}` : 'Community',
+        };
+      })
+  ), [feedItems]);
 
   return (
     <div className="home-feed-page">
@@ -752,32 +926,40 @@ export default function HomeFeedPage() {
                   {item.authorId && <span className="pill monospace">Author {String(item.authorId).slice(0, 8)}</span>}
                 </div>
 
-                <div className="feed-card-actions social-actions">
-                  {isModerator && (
+                <div className="feed-card-actions social-actions reddit-action-row">
+                  <div className="reddit-vote-group" role="group" aria-label={`Voting controls for ${item.title || 'post'}`}>
                     <button
-                      className="btn btn-soft"
+                      className={`reddit-action-btn vote-btn ${item.userVote === 'up' ? 'is-active' : ''}`}
                       type="button"
-                      disabled={actionBusyPostId === item.id || !isAuthenticated}
-                      onClick={() => patchPost(item.id, { pinned: !item.pinned }, item.pinned ? 'Post unpinned.' : 'Post pinned.')}
+                      aria-pressed={item.userVote === 'up'}
+                      disabled={actionBusyPostId === item.id || item.status === 'archived'}
+                      onClick={() => handleVote(item, 'up')}
                     >
-                      {item.pinned ? 'Unpin' : 'Pin'}
+                      Upvote
                     </button>
-                  )}
+                    <span className="reddit-vote-count" aria-live="polite">{getBaseVoteScore(item)}</span>
+                    <button
+                      className={`reddit-action-btn vote-btn ${item.userVote === 'down' ? 'is-active' : ''}`}
+                      type="button"
+                      aria-pressed={item.userVote === 'down'}
+                      disabled={actionBusyPostId === item.id || item.status === 'archived'}
+                      onClick={() => handleVote(item, 'down')}
+                    >
+                      Downvote
+                    </button>
+                  </div>
+
                   <button
-                    className="btn btn-soft"
+                    className="reddit-action-btn"
                     type="button"
-                    disabled={actionBusyPostId === item.id || !isAuthenticated || item.status === 'archived' || !canUpdatePostExpiry(item)}
-                    onClick={() => patchPost(
-                      item.id,
-                      { expiresAt: toLocalDateTimeInput(new Date(Date.now() + 3600_000).toISOString()) },
-                      'Expiry updated (+1 hour).',
-                      { enforceExpiryPermission: true, post: item },
-                    )}
+                    aria-expanded={openCommentsPostId === item.id}
+                    onClick={() => toggleComments(item)}
                   >
-                    Set +1h Expiry
+                    Comments {getCommentCount(item)}
                   </button>
+
                   <button
-                    className="btn btn-danger-soft"
+                    className="reddit-action-btn archive-action"
                     type="button"
                     disabled={actionBusyPostId === item.id || !isAuthenticated || (!isModerator && item.status === 'archived')}
                     onClick={() => patchPost(item.id, { archive: true }, 'Post archived.')}
@@ -785,6 +967,65 @@ export default function HomeFeedPage() {
                     Archive
                   </button>
                 </div>
+
+                {openCommentsPostId === item.id && (
+                  <section className="post-comments-panel" aria-label="Comments section">
+                    <div className="post-comments-header">
+                      <h5>Comments</h5>
+                      <button
+                        className="btn btn-soft"
+                        type="button"
+                        disabled={commentsLoadingPostId === item.id}
+                        onClick={() => loadComments(item.id, { openAfterLoad: false })}
+                      >
+                        {commentsLoadingPostId === item.id ? 'Refreshing...' : 'Refresh'}
+                      </button>
+                    </div>
+
+                    {commentsLoadingPostId === item.id ? (
+                      <p className="post-comments-hint">Loading comments...</p>
+                    ) : Array.isArray(commentsByPostId[item.id]) && commentsByPostId[item.id].length > 0 ? (
+                      <ul className="post-comments-list" aria-label="Post comments">
+                        {commentsByPostId[item.id].map((comment) => (
+                          <li key={comment.id} className="post-comment-item">
+                            <div className="post-comment-head">
+                              <strong>{comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}</strong>
+                              <small>{formatDate(comment.createdAt)}</small>
+                            </div>
+                            <p>{comment.content}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="post-comments-hint">No comments yet. Start the discussion.</p>
+                    )}
+
+                    <form
+                      className="post-comment-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        submitComment(item.id);
+                      }}
+                    >
+                      <textarea
+                        rows={2}
+                        placeholder={isAuthenticated ? 'Write a comment...' : 'Sign in to write a comment'}
+                        value={commentDrafts[item.id] || ''}
+                        onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
+                        disabled={commentsSubmittingPostId === item.id || !isAuthenticated}
+                      />
+                      <div className="post-comment-form-actions">
+                        <button
+                          className="btn btn-primary-solid"
+                          type="submit"
+                          disabled={commentsSubmittingPostId === item.id || !isAuthenticated || !(commentDrafts[item.id] || '').trim()}
+                        >
+                          {commentsSubmittingPostId === item.id ? 'Posting...' : 'Post Comment'}
+                        </button>
+                      </div>
+                    </form>
+                  </section>
+                )}
 
               </article>
             ))}

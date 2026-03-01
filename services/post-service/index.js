@@ -13,9 +13,12 @@ const CONFIG = {
     schema: process.env.POST_SERVICE_SCHEMA || 'public',
     tables: {
         posts: process.env.POSTS_TABLE || 'posts',
+        users: process.env.USERS_TABLE || 'users',
         tags: process.env.TAGS_TABLE || 'tags',
         postTags: process.env.POST_TAGS_TABLE || 'post_tags',
         postRefs: process.env.POST_REFS_TABLE || 'post_refs',
+        postVotes: process.env.POST_VOTES_TABLE || 'post_votes',
+        postComments: process.env.POST_COMMENTS_TABLE || 'post_comments',
         alumniVerificationApplications: process.env.ALUMNI_VERIFICATION_TABLE || 'alumni_verification_applications',
     },
     feedDefaultLimit: Number(process.env.POST_FEED_DEFAULT_LIMIT) || 20,
@@ -33,6 +36,10 @@ const supabase = (CONFIG.supabaseUrl && CONFIG.supabaseKey)
 
 function isSupabaseConfigured() {
     return Boolean(supabase);
+}
+
+function isMissingTableError(error) {
+    return error?.code === '42P01';
 }
 
 function parseBool(value, fallback = false) {
@@ -77,6 +84,10 @@ function pickDefined(fields) {
     );
 }
 
+function normalizeText(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
 function normalizeDate(value, fieldName) {
     if (value === undefined) return { value: undefined };
     if (value === null || value === '') return { value: null };
@@ -118,6 +129,42 @@ function formatSupabaseError(error) {
     return error.message || error.details || 'Unknown database error';
 }
 
+function parseVoteInput(value) {
+    if (value === undefined || value === null || value === '') {
+        return { error: 'vote is required' };
+    }
+
+    const normalized = String(value).trim().toLowerCase();
+    if (['1', 'up', 'upvote', 'true'].includes(normalized)) return { value: 1 };
+    if (['-1', 'down', 'downvote'].includes(normalized)) return { value: -1 };
+    if (['0', 'none', 'clear', 'neutral', 'remove', 'false'].includes(normalized)) return { value: 0 };
+    return { error: 'vote must be one of: up, down, none' };
+}
+
+function parseCommentInput(body = {}) {
+    const content = normalizeText(body.content ?? body.comment ?? body.text);
+    const errors = [];
+    if (!content) {
+        errors.push('content is required');
+    } else if (content.length > 5000) {
+        errors.push('content is too long');
+    }
+
+    return { content, errors };
+}
+
+function mapComment(row, author = null) {
+    return {
+        id: row.id,
+        postId: row.post_id,
+        authorId: row.author_id,
+        content: row.content,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        author,
+    };
+}
+
 function dbUnavailable(res) {
     return res.status(503).json({
         error: 'Post service database is not configured',
@@ -125,10 +172,25 @@ function dbUnavailable(res) {
     });
 }
 
+function socialSchemaError(res) {
+    return res.status(500).json({
+        error: `Missing social tables. Run services/post-service/schema.sql first.`,
+    });
+}
+
 function ensureDb(req, res, next) {
     if (!isSupabaseConfigured()) {
         return dbUnavailable(res);
     }
+    return next();
+}
+
+function ensureAuthenticated(req, res, next) {
+    const requestUser = getRequestUser(req);
+    if (!requestUser?.id) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+    req.requestUser = requestUser;
     return next();
 }
 
@@ -420,15 +482,164 @@ async function attachTags(posts) {
     }));
 }
 
-async function enrichPosts(postRows) {
-    const mapped = postRows.map(mapPost);
-    const withTags = await attachTags(mapped);
-    const refsByPostId = await getPostRefs(withTags.map((post) => post.id));
+async function getUsersByIds(userIds = []) {
+    if (!userIds.length) return new Map();
 
-    return withTags.map((post) => ({
-        ...post,
-        refs: refsByPostId.get(post.id) || [],
-    }));
+    const { data, error } = await supabase
+        .from(CONFIG.tables.users)
+        .select('id, full_name, email, role')
+        .in('id', userIds);
+
+    if (error) {
+        if (isMissingTableError(error)) return new Map();
+        throw error;
+    }
+
+    const userMap = new Map();
+    for (const row of data || []) {
+        userMap.set(row.id, {
+            id: row.id,
+            fullName: row.full_name || null,
+            email: row.email || null,
+            role: row.role || null,
+        });
+    }
+    return userMap;
+}
+
+async function getVoteSummaryByPostIds(postIds = [], requestUserId = null) {
+    if (!postIds.length) return new Map();
+
+    const { data, error } = await supabase
+        .from(CONFIG.tables.postVotes)
+        .select('post_id, user_id, vote')
+        .in('post_id', postIds);
+
+    if (error) {
+        if (isMissingTableError(error)) return new Map();
+        throw error;
+    }
+
+    const summaryByPostId = new Map();
+    for (const row of data || []) {
+        const vote = Number(row.vote);
+        const safeVote = vote === 1 ? 1 : vote === -1 ? -1 : 0;
+        const existing = summaryByPostId.get(row.post_id) || {
+            score: 0,
+            voteScore: 0,
+            upvoteCount: 0,
+            downvoteCount: 0,
+            userVote: null,
+        };
+
+        if (safeVote === 1) existing.upvoteCount += 1;
+        if (safeVote === -1) existing.downvoteCount += 1;
+        existing.score += safeVote;
+        existing.voteScore += safeVote;
+
+        if (requestUserId && String(row.user_id) === String(requestUserId)) {
+            existing.userVote = safeVote === 1 ? 'up' : safeVote === -1 ? 'down' : null;
+        }
+        summaryByPostId.set(row.post_id, existing);
+    }
+
+    return summaryByPostId;
+}
+
+async function getCommentCountByPostIds(postIds = []) {
+    if (!postIds.length) return new Map();
+
+    const { data, error } = await supabase
+        .from(CONFIG.tables.postComments)
+        .select('post_id')
+        .in('post_id', postIds);
+
+    if (error) {
+        if (isMissingTableError(error)) return new Map();
+        throw error;
+    }
+
+    const countByPostId = new Map();
+    for (const row of data || []) {
+        const current = countByPostId.get(row.post_id) || 0;
+        countByPostId.set(row.post_id, current + 1);
+    }
+    return countByPostId;
+}
+
+async function getCommentsForPost(postId, { limit = 50, offset = 0 } = {}) {
+    const { data, error, count } = await supabase
+        .from(CONFIG.tables.postComments)
+        .select('*', { count: 'exact' })
+        .eq('post_id', postId)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+    if (error) {
+        throw error;
+    }
+
+    const rows = data || [];
+    const authorIds = [...new Set(rows.map((row) => row.author_id).filter(Boolean))];
+    const userMap = await getUsersByIds(authorIds);
+
+    return {
+        data: rows.map((row) => mapComment(row, userMap.get(row.author_id) || null)),
+        pagination: {
+            limit,
+            offset,
+            total: count ?? rows.length,
+        },
+    };
+}
+
+async function getPostCommentById(postId, commentId) {
+    const { data, error } = await supabase
+        .from(CONFIG.tables.postComments)
+        .select('*')
+        .eq('id', commentId)
+        .eq('post_id', postId)
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+
+    return data || null;
+}
+
+async function enrichPosts(postRows, { requestUserId = null } = {}) {
+    const mapped = postRows.map(mapPost);
+    if (!mapped.length) return [];
+
+    const withTags = await attachTags(mapped);
+    const postIds = withTags.map((post) => post.id);
+    const refsByPostId = await getPostRefs(postIds);
+    const voteSummaryByPostId = await getVoteSummaryByPostIds(postIds, requestUserId);
+    const commentCountByPostId = await getCommentCountByPostIds(postIds);
+
+    return withTags.map((post) => {
+        const voteSummary = voteSummaryByPostId.get(post.id) || {
+            score: 0,
+            voteScore: 0,
+            upvoteCount: 0,
+            downvoteCount: 0,
+            userVote: null,
+        };
+        const commentCount = commentCountByPostId.get(post.id) || 0;
+
+        return {
+            ...post,
+            refs: refsByPostId.get(post.id) || [],
+            score: voteSummary.score,
+            voteScore: voteSummary.voteScore,
+            upvoteCount: voteSummary.upvoteCount,
+            downvoteCount: voteSummary.downvoteCount,
+            userVote: voteSummary.userVote,
+            commentCount,
+            commentsCount: commentCount,
+        };
+    });
 }
 
 async function ensureTagsExist(tagNames) {
@@ -516,7 +727,7 @@ async function replacePostRef(postId, ref) {
     }
 }
 
-async function getPostById(postId) {
+async function getPostById(postId, options = {}) {
     const { data, error } = await supabase
         .from(CONFIG.tables.posts)
         .select('*')
@@ -529,8 +740,22 @@ async function getPostById(postId) {
 
     if (!data) return null;
 
-    const [enriched] = await enrichPosts([data]);
+    const [enriched] = await enrichPosts([data], options);
     return enriched || null;
+}
+
+async function getPostMetaById(postId) {
+    const { data, error } = await supabase
+        .from(CONFIG.tables.posts)
+        .select('id, status, author_id')
+        .eq('id', postId)
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+
+    return data || null;
 }
 
 async function getPostAuthorId(postId) {
@@ -592,6 +817,11 @@ app.get('/', (req, res) => {
             'GET /posts/:id',
             'POST /posts',
             'PATCH /posts/:id',
+            'POST /posts/:id/vote',
+            'GET /posts/:id/comments',
+            'POST /posts/:id/comments',
+            'PATCH /posts/:id/comments/:commentId',
+            'DELETE /posts/:id/comments/:commentId',
             'GET /tags',
             'POST /tags',
         ],
@@ -617,6 +847,7 @@ app.post('/internal/archive-expired', ensureDb, async (req, res) => {
 
 app.get('/feed', ensureDb, async (req, res) => {
     try {
+        const requestUser = getRequestUser(req);
         const archiveResult = await archiveExpiredPosts().catch(() => ({ archivedCount: 0 }));
         const limit = parseIntInRange(req.query.limit, CONFIG.feedDefaultLimit, 1, CONFIG.feedMaxLimit);
         const offset = parseIntInRange(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
@@ -679,7 +910,7 @@ app.get('/feed', ensureDb, async (req, res) => {
             throw error;
         }
 
-        const data = await enrichPosts(rows || []);
+        const data = await enrichPosts(rows || [], { requestUserId: requestUser?.id || null });
 
         return res.json({
             data,
@@ -699,13 +930,27 @@ app.get('/feed', ensureDb, async (req, res) => {
 
 app.get('/posts/:id', ensureDb, async (req, res) => {
     try {
-        const post = await getPostById(req.params.id);
+        const requestUser = getRequestUser(req);
+        const includeComments = parseBool(req.query.includeComments, false);
+        const commentsLimit = parseIntInRange(req.query.commentsLimit, 50, 1, 200);
+        const commentsOffset = parseIntInRange(req.query.commentsOffset, 0, 0, Number.MAX_SAFE_INTEGER);
+
+        const post = await getPostById(req.params.id, { requestUserId: requestUser?.id || null });
         if (!post) {
             return res.status(404).json({ error: 'Post not found' });
         }
 
+        if (includeComments) {
+            const comments = await getCommentsForPost(req.params.id, {
+                limit: commentsLimit,
+                offset: commentsOffset,
+            });
+            return res.json({ data: { ...post, comments: comments.data }, commentPagination: comments.pagination });
+        }
+
         return res.json({ data: post });
     } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
         return res.status(500).json({ error: formatSupabaseError(error) });
     }
 });
@@ -867,6 +1112,248 @@ app.patch('/posts/:id', ensureDb, async (req, res) => {
             data: fullPost,
         });
     } catch (error) {
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.post('/posts/:id/vote', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const postId = normalizeText(req.params.id);
+        if (!postId) {
+            return res.status(400).json({ error: 'post id is required' });
+        }
+
+        const voteInput = parseVoteInput(req.body?.vote ?? req.body?.direction ?? req.body?.value);
+        if (voteInput.error) {
+            return res.status(400).json({ error: voteInput.error });
+        }
+
+        const postMeta = await getPostMetaById(postId);
+        if (!postMeta) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+
+        if (String(postMeta.status || '').toLowerCase() === 'archived') {
+            return res.status(400).json({ error: 'Archived posts cannot be voted on.' });
+        }
+
+        if (voteInput.value === 0) {
+            const { error: deleteError } = await supabase
+                .from(CONFIG.tables.postVotes)
+                .delete()
+                .eq('post_id', postId)
+                .eq('user_id', req.requestUser.id);
+
+            if (deleteError) {
+                if (isMissingTableError(deleteError)) return socialSchemaError(res);
+                throw deleteError;
+            }
+        } else {
+            const nowIso = new Date().toISOString();
+            const { error: upsertError } = await supabase
+                .from(CONFIG.tables.postVotes)
+                .upsert({
+                    post_id: postId,
+                    user_id: req.requestUser.id,
+                    vote: voteInput.value,
+                    updated_at: nowIso,
+                }, {
+                    onConflict: 'post_id,user_id',
+                });
+
+            if (upsertError) {
+                if (isMissingTableError(upsertError)) return socialSchemaError(res);
+                throw upsertError;
+            }
+        }
+
+        const post = await getPostById(postId, { requestUserId: req.requestUser.id });
+        return res.json({
+            message: voteInput.value === 0 ? 'Vote removed' : 'Vote updated',
+            data: {
+                postId,
+                userVote: post?.userVote || null,
+                score: post?.score || 0,
+                voteScore: post?.voteScore || 0,
+                upvoteCount: post?.upvoteCount || 0,
+                downvoteCount: post?.downvoteCount || 0,
+                commentCount: post?.commentCount || 0,
+            },
+        });
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.get('/posts/:id/comments', ensureDb, async (req, res) => {
+    try {
+        const postId = normalizeText(req.params.id);
+        if (!postId) {
+            return res.status(400).json({ error: 'post id is required' });
+        }
+
+        const postMeta = await getPostMetaById(postId);
+        if (!postMeta) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+
+        const limit = parseIntInRange(req.query.limit, 50, 1, 200);
+        const offset = parseIntInRange(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+        const comments = await getCommentsForPost(postId, { limit, offset });
+        return res.json(comments);
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.post('/posts/:id/comments', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const postId = normalizeText(req.params.id);
+        if (!postId) {
+            return res.status(400).json({ error: 'post id is required' });
+        }
+
+        const payload = parseCommentInput(req.body);
+        if (payload.errors.length) {
+            return res.status(400).json({ error: 'Validation failed', details: payload.errors });
+        }
+
+        const postMeta = await getPostMetaById(postId);
+        if (!postMeta) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+
+        if (String(postMeta.status || '').toLowerCase() === 'archived') {
+            return res.status(400).json({ error: 'Archived posts cannot be commented on.' });
+        }
+
+        const nowIso = new Date().toISOString();
+        const { data: createdComment, error: insertError } = await supabase
+            .from(CONFIG.tables.postComments)
+            .insert({
+                post_id: postId,
+                author_id: req.requestUser.id,
+                content: payload.content,
+                updated_at: nowIso,
+            })
+            .select('*')
+            .single();
+
+        if (insertError) {
+            if (isMissingTableError(insertError)) return socialSchemaError(res);
+            throw insertError;
+        }
+
+        const userMap = await getUsersByIds([req.requestUser.id]);
+        const post = await getPostById(postId, { requestUserId: req.requestUser.id });
+        return res.status(201).json({
+            message: 'Comment posted',
+            data: mapComment(createdComment, userMap.get(req.requestUser.id) || null),
+            meta: {
+                commentCount: post?.commentCount || 0,
+            },
+        });
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.patch('/posts/:id/comments/:commentId', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const postId = normalizeText(req.params.id);
+        const commentId = normalizeText(req.params.commentId);
+        if (!postId || !commentId) {
+            return res.status(400).json({ error: 'post id and comment id are required' });
+        }
+
+        const payload = parseCommentInput(req.body);
+        if (payload.errors.length) {
+            return res.status(400).json({ error: 'Validation failed', details: payload.errors });
+        }
+
+        const existingComment = await getPostCommentById(postId, commentId);
+        if (!existingComment) {
+            return res.status(404).json({ error: 'Comment not found' });
+        }
+
+        const isOwner = String(existingComment.author_id) === String(req.requestUser.id);
+        if (!isOwner && !isModeratorRole(req.requestUser.role)) {
+            return res.status(403).json({ error: 'You can only edit your own comment.' });
+        }
+
+        const nowIso = new Date().toISOString();
+        const { data: updatedComment, error: updateError } = await supabase
+            .from(CONFIG.tables.postComments)
+            .update({
+                content: payload.content,
+                updated_at: nowIso,
+            })
+            .eq('id', commentId)
+            .eq('post_id', postId)
+            .select('*')
+            .single();
+
+        if (updateError) {
+            if (isMissingTableError(updateError)) return socialSchemaError(res);
+            throw updateError;
+        }
+
+        const userMap = await getUsersByIds([updatedComment.author_id]);
+        return res.json({
+            message: 'Comment updated',
+            data: mapComment(updatedComment, userMap.get(updatedComment.author_id) || null),
+        });
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.delete('/posts/:id/comments/:commentId', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const postId = normalizeText(req.params.id);
+        const commentId = normalizeText(req.params.commentId);
+        if (!postId || !commentId) {
+            return res.status(400).json({ error: 'post id and comment id are required' });
+        }
+
+        const existingComment = await getPostCommentById(postId, commentId);
+        if (!existingComment) {
+            return res.status(404).json({ error: 'Comment not found' });
+        }
+
+        const isOwner = String(existingComment.author_id) === String(req.requestUser.id);
+        if (!isOwner && !isModeratorRole(req.requestUser.role)) {
+            return res.status(403).json({ error: 'You can only delete your own comment.' });
+        }
+
+        const { error: deleteError } = await supabase
+            .from(CONFIG.tables.postComments)
+            .delete()
+            .eq('id', commentId)
+            .eq('post_id', postId);
+
+        if (deleteError) {
+            if (isMissingTableError(deleteError)) return socialSchemaError(res);
+            throw deleteError;
+        }
+
+        const post = await getPostById(postId, { requestUserId: req.requestUser.id });
+        return res.json({
+            message: 'Comment deleted',
+            data: {
+                id: commentId,
+                postId,
+            },
+            meta: {
+                commentCount: post?.commentCount || 0,
+            },
+        });
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
         return res.status(500).json({ error: formatSupabaseError(error) });
     }
 });
