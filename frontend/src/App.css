@@ -2158,23 +2158,23 @@
 
 .reddit-action-row {
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .reddit-vote-group {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   border-radius: 999px;
-  border: 1px solid rgba(176, 226, 255, 0.18);
-  background: rgba(10, 23, 34, 0.92);
-  padding: 4px;
+  border: 1px solid rgba(199, 217, 233, 0.22);
+  background: rgba(12, 20, 28, 0.96);
+  padding: 3px 6px;
 }
 
 .reddit-action-btn {
-  border: 1px solid rgba(176, 226, 255, 0.16);
-  background: rgba(10, 23, 34, 0.92);
-  color: #d6e9f6;
+  border: 1px solid rgba(199, 217, 233, 0.2);
+  background: rgba(12, 20, 28, 0.96);
+  color: #dce8f2;
   border-radius: 999px;
   min-height: 36px;
   padding: 0 14px;
@@ -2189,8 +2189,8 @@
 }
 
 .reddit-action-btn:hover:not(:disabled) {
-  border-color: rgba(111, 251, 224, 0.45);
-  background: rgba(15, 34, 49, 0.94);
+  border-color: rgba(152, 196, 227, 0.5);
+  background: rgba(20, 31, 42, 0.98);
 }
 
 .reddit-action-btn:disabled {
@@ -2198,21 +2198,55 @@
   cursor: not-allowed;
 }
 
-.reddit-action-btn.vote-btn {
-  min-width: 92px;
+.reddit-icon {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
 }
 
-.reddit-action-btn.is-active {
-  border-color: rgba(111, 251, 224, 0.5);
-  background: rgba(0, 209, 178, 0.18);
-  color: #cafff5;
+.reddit-action-btn.vote-btn {
+  border: none;
+  background: transparent;
+  min-height: 30px;
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
 }
 
 .reddit-vote-count {
   min-width: 44px;
   text-align: center;
-  color: #e8f5fc;
+  color: #edf4fa;
   font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.reddit-action-btn.vote-btn:hover:not(:disabled) {
+  border-color: transparent;
+  background: rgba(152, 196, 227, 0.16);
+}
+
+.reddit-action-btn.vote-btn.is-active {
+  background: rgba(111, 251, 224, 0.2);
+  color: #bfffe8;
+}
+
+.reddit-metric-btn {
+  min-width: 88px;
+  padding: 0 12px;
+}
+
+.reddit-action-count {
+  font-weight: 700;
+}
+
+.reddit-share-btn {
+  min-width: 110px;
 }
 
 .reddit-action-btn.archive-action {
@@ -2875,13 +2909,11 @@
   }
 
   .reddit-vote-group {
-    width: 100%;
-    justify-content: space-between;
+    width: auto;
   }
 
   .reddit-action-btn.vote-btn {
-    flex: 1 1 auto;
-    min-width: 0;
+    flex: 0 0 auto;
   }
 
   .reddit-action-btn {
