@@ -3066,6 +3066,39 @@
   min-height: 40px;
 }
 
+.chat-search-list {
+  display: grid;
+  gap: 6px;
+}
+
+.chat-search-item {
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid rgba(176, 226, 255, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+  color: inherit;
+  font: inherit;
+  padding: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+}
+
+.chat-search-item strong {
+  font-size: 0.8rem;
+}
+
+.chat-search-item small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.chat-search-item:hover,
+.chat-search-item.is-selected {
+  border-color: rgba(138, 180, 255, 0.34);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .chat-conversation-list {
   overflow-y: auto;
   min-height: 0;

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 
@@ -12,6 +11,7 @@ function normalizeConversations(items) {
     .map((item) => ({
       conversationId: item.conversationId,
       otherUserId: item.otherUserId || 'Unknown user',
+      otherUserEmail: item.otherUserEmail || null,
       lastMessage: item.lastMessage || null,
       lastMessageAt: item.lastMessageAt || null,
       unreadCount: Number(item.unreadCount || 0),
@@ -30,6 +30,7 @@ function upsertConversation(list, update) {
   const normalized = {
     conversationId: update.conversationId,
     otherUserId: update.otherUserId || 'Unknown user',
+    otherUserEmail: update.otherUserEmail || null,
     lastMessage: update.lastMessage || null,
     lastMessageAt: update.lastMessageAt || null,
     unreadCount: Number(update.unreadCount || 0),
@@ -112,6 +113,39 @@ async function chatRequest(token, path, options = {}) {
   return data;
 }
 
+async function loadSocketIoFactory(baseUrl) {
+  if (typeof window === 'undefined') {
+    throw new Error('Socket client can only be used in a browser');
+  }
+
+  if (typeof window.io === 'function') {
+    return window.io;
+  }
+
+  await new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-socket-io-client="true"]');
+    if (existing) {
+      existing.addEventListener('load', resolve, { once: true });
+      existing.addEventListener('error', () => reject(new Error('Failed to load socket client')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = `${baseUrl}/chat/socket.io/socket.io.js`;
+    script.async = true;
+    script.dataset.socketIoClient = 'true';
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Failed to load socket client'));
+    document.body.appendChild(script);
+  });
+
+  if (typeof window.io !== 'function') {
+    throw new Error('Socket client did not initialize');
+  }
+
+  return window.io;
+}
+
 export default function ChatPage() {
   const navigate = useNavigate();
   const { token, user, isAuthenticated } = useAuth();
@@ -134,7 +168,11 @@ export default function ChatPage() {
   const [draftBody, setDraftBody] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
 
-  const [startUserId, setStartUserId] = useState('');
+  const [emailQuery, setEmailQuery] = useState('');
+  const [searchingUsers, setSearchingUsers] = useState(false);
+  const [userSearchResults, setUserSearchResults] = useState([]);
+  const [selectedRecipient, setSelectedRecipient] = useState(null);
+
   const [startingConversation, setStartingConversation] = useState(false);
   const [startConversationError, setStartConversationError] = useState('');
 
@@ -255,50 +293,69 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!token || !isAuthenticated) return undefined;
+    let isCancelled = false;
+    let activeSocket = null;
 
-    const socket = io(API_BASE_URL, {
-      path: '/chat/socket.io',
-      transports: ['websocket', 'polling'],
-      auth: { token },
-    });
+    async function connectSocket() {
+      try {
+        const ioFactory = await loadSocketIoFactory(API_BASE_URL);
+        if (isCancelled) return;
 
-    socketRef.current = socket;
+        const socket = ioFactory(API_BASE_URL, {
+          path: '/chat/socket.io',
+          transports: ['websocket', 'polling'],
+          auth: { token },
+        });
 
-    socket.on('connect', () => {
-      setSocketConnected(true);
-      if (selectedConversationRef.current) {
-        socket.emit('conversation:join', { conversationId: selectedConversationRef.current });
+        activeSocket = socket;
+        socketRef.current = socket;
+
+        socket.on('connect', () => {
+          setSocketConnected(true);
+          if (selectedConversationRef.current) {
+            socket.emit('conversation:join', { conversationId: selectedConversationRef.current });
+          }
+        });
+
+        socket.on('disconnect', () => {
+          setSocketConnected(false);
+        });
+
+        socket.on('conversation:updated', (payload) => {
+          if (!payload?.conversationId) return;
+          setConversations((prev) => upsertConversation(prev, payload));
+        });
+
+        socket.on('message:new', async (message) => {
+          if (!message?.conversationId) return;
+          if (message.conversationId !== selectedConversationRef.current) return;
+
+          setMessages((prev) => mergeMessages(prev, [message], 'append'));
+
+          if (String(message.senderId) !== currentUserId) {
+            await markConversationRead(message.conversationId);
+          }
+
+          scrollMessagesToBottom();
+        });
+
+        socket.on('connect_error', (error) => {
+          console.warn('Socket connection failed', error?.message || error);
+        });
+      } catch (error) {
+        if (!isCancelled) {
+          console.warn('Could not initialize socket client', error?.message || error);
+        }
       }
-    });
+    }
 
-    socket.on('disconnect', () => {
-      setSocketConnected(false);
-    });
-
-    socket.on('conversation:updated', (payload) => {
-      if (!payload?.conversationId) return;
-      setConversations((prev) => upsertConversation(prev, payload));
-    });
-
-    socket.on('message:new', async (message) => {
-      if (!message?.conversationId) return;
-      if (message.conversationId !== selectedConversationRef.current) return;
-
-      setMessages((prev) => mergeMessages(prev, [message], 'append'));
-
-      if (String(message.senderId) !== currentUserId) {
-        await markConversationRead(message.conversationId);
-      }
-
-      scrollMessagesToBottom();
-    });
-
-    socket.on('connect_error', (error) => {
-      console.warn('Socket connection failed', error?.message || error);
-    });
+    connectSocket();
 
     return () => {
-      socket.disconnect();
+      isCancelled = true;
+      if (activeSocket) {
+        activeSocket.disconnect();
+      }
       socketRef.current = null;
       setSocketConnected(false);
     };
@@ -310,19 +367,61 @@ export default function ChatPage() {
     socketRef.current.emit('conversation:join', { conversationId: selectedConversationId });
   }, [selectedConversationId, socketConnected]);
 
+  useEffect(() => {
+    if (!token) return undefined;
+
+    const normalizedQuery = emailQuery.trim();
+
+    if (selectedRecipient && selectedRecipient.email !== normalizedQuery) {
+      setSelectedRecipient(null);
+    }
+
+    if (normalizedQuery.length < 2) {
+      setUserSearchResults([]);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        setSearchingUsers(true);
+        const params = new URLSearchParams({ query: normalizedQuery });
+        const result = await chatRequest(token, `/chat/users/search?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        setUserSearchResults(Array.isArray(result?.items) ? result.items : []);
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          setUserSearchResults([]);
+        }
+      } finally {
+        setSearchingUsers(false);
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [emailQuery, selectedRecipient, token]);
+
   async function handleStartConversation(event) {
     event.preventDefault();
 
-    const trimmedUserId = startUserId.trim();
-    if (!trimmedUserId || !token) return;
+    const trimmedEmail = emailQuery.trim();
+    if (!trimmedEmail || !token) return;
 
     setStartingConversation(true);
     setStartConversationError('');
 
     try {
+      const payload = selectedRecipient?.id
+        ? { otherUserId: selectedRecipient.id }
+        : { otherUserEmail: trimmedEmail };
+
       const result = await chatRequest(token, '/chat/conversations/dm', {
         method: 'POST',
-        body: JSON.stringify({ otherUserId: trimmedUserId }),
+        body: JSON.stringify(payload),
       });
 
       const conversationId = result?.conversationId;
@@ -330,7 +429,9 @@ export default function ChatPage() {
         throw new Error('Conversation was not created');
       }
 
-      setStartUserId('');
+      setEmailQuery('');
+      setUserSearchResults([]);
+      setSelectedRecipient(null);
       await loadConversations(conversationId);
       setSelectedConversationId(conversationId);
     } catch (error) {
@@ -362,6 +463,7 @@ export default function ChatPage() {
       setConversations((prev) => upsertConversation(prev, {
         conversationId: selectedConversationId,
         otherUserId: selectedConversation?.otherUserId,
+        otherUserEmail: selectedConversation?.otherUserEmail,
         lastMessage: createdMessage.body,
         lastMessageAt: createdMessage.createdAt,
         unreadCount: 0,
@@ -399,19 +501,38 @@ export default function ChatPage() {
       <div className="chat-layout">
         <aside className="chat-sidebar" aria-label="Conversations">
           <form className="chat-start-form" onSubmit={handleStartConversation}>
-            <label htmlFor="chat-user-id">Start new chat</label>
+            <label htmlFor="chat-user-email">Start new chat</label>
             <div className="chat-start-row">
               <input
-                id="chat-user-id"
-                type="text"
-                placeholder="Enter user ID"
-                value={startUserId}
-                onChange={(event) => setStartUserId(event.target.value)}
+                id="chat-user-email"
+                type="email"
+                placeholder="Search by email"
+                value={emailQuery}
+                onChange={(event) => setEmailQuery(event.target.value)}
               />
-              <button className="btn btn-accent" type="submit" disabled={startingConversation || !startUserId.trim()}>
+              <button className="btn btn-accent" type="submit" disabled={startingConversation || !emailQuery.trim()}>
                 {startingConversation ? 'Starting...' : 'Start'}
               </button>
             </div>
+            {searchingUsers ? <p className="chat-empty-text">Searching users...</p> : null}
+            {userSearchResults.length > 0 ? (
+              <div className="chat-search-list">
+                {userSearchResults.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`chat-search-item${selectedRecipient?.id === item.id ? ' is-selected' : ''}`}
+                    onClick={() => {
+                      setSelectedRecipient(item);
+                      setEmailQuery(item.email || '');
+                    }}
+                  >
+                    <strong>{item.email}</strong>
+                    <small>{item.fullName || item.id}</small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {startConversationError ? <p className="chat-inline-error">{startConversationError}</p> : null}
           </form>
 
@@ -421,7 +542,7 @@ export default function ChatPage() {
             ) : conversationsError ? (
               <p className="chat-inline-error">{conversationsError}</p>
             ) : conversations.length === 0 ? (
-              <p className="chat-empty-text">No conversations yet. Start one using a user ID.</p>
+              <p className="chat-empty-text">No conversations yet. Start one using an email.</p>
             ) : (
               conversations.map((conversation) => (
                 <button
@@ -431,7 +552,7 @@ export default function ChatPage() {
                   onClick={() => setSelectedConversationId(conversation.conversationId)}
                 >
                   <div className="chat-conversation-head">
-                    <strong>{conversation.otherUserId}</strong>
+                    <strong>{conversation.otherUserEmail || conversation.otherUserId}</strong>
                     <small>{formatConversationTime(conversation.lastMessageAt)}</small>
                   </div>
                   <div className="chat-conversation-foot">
@@ -452,7 +573,7 @@ export default function ChatPage() {
               <header className="chat-thread-header">
                 <div>
                   <p className="eyebrow">Conversation</p>
-                  <h3>{selectedConversation.otherUserId}</h3>
+                  <h3>{selectedConversation.otherUserEmail || selectedConversation.otherUserId}</h3>
                 </div>
               </header>
 
@@ -507,7 +628,7 @@ export default function ChatPage() {
           ) : (
             <div className="chat-empty-state">
               <h3>Select a conversation</h3>
-              <p>Choose a conversation from the left, or start a new DM using a user ID.</p>
+              <p>Choose a conversation from the left, or start a new DM using an email.</p>
             </div>
           )}
 

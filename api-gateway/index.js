@@ -43,6 +43,7 @@ app.get('/health', (req, res) => {
 
 server.on('upgrade', (req, socket, head) => {
     if (req.url && req.url.startsWith('/chat/')) {
+        req.url = req.url.replace(/^\/chat/, '');
         chatProxy.upgrade(req, socket, head);
     }
 });

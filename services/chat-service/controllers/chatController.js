@@ -4,7 +4,18 @@ const { query, withTransaction } = require('../db');
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const startDmSchema = z.object({
-    otherUserId: z.string().uuid(),
+    otherUserId: z.string().uuid().optional(),
+    otherUserEmail: z.string().trim().email().optional(),
+}).refine(
+    (value) => Boolean(value.otherUserId || value.otherUserEmail),
+    {
+        message: 'otherUserId or otherUserEmail is required',
+        path: ['otherUserId'],
+    }
+);
+
+const userSearchSchema = z.object({
+    query: z.string().trim().min(2).max(120),
 });
 
 const messageBodySchema = z.object({
@@ -37,6 +48,7 @@ function mapConversationRow(row) {
     return {
         conversationId: row.conversation_id,
         otherUserId: row.other_user_id,
+        otherUserEmail: row.other_user_email || null,
         lastMessage: row.last_message || null,
         lastMessageAt: row.last_message_at || null,
         unreadCount: Number(row.unread_count || 0),
@@ -141,6 +153,7 @@ async function fetchConversationSummariesForUser(userId, conversationId = null, 
             SELECT
                 c.id AS conversation_id,
                 other_member.user_id AS other_user_id,
+                other_user.email AS other_user_email,
                 last_message.body AS last_message,
                 last_message.created_at AS last_message_at,
                 COALESCE(unread.unread_count, 0)::int AS unread_count
@@ -161,6 +174,8 @@ async function fetchConversationSummariesForUser(userId, conversationId = null, 
                 ORDER BY other.joined_at ASC
                 LIMIT 1
             ) other_member ON true
+            LEFT JOIN users other_user
+                ON other_user.id = other_member.user_id
             LEFT JOIN LATERAL (
                 SELECT m.body, m.created_at
                 FROM messages m
@@ -196,15 +211,45 @@ async function startDmConversation(req, res, next) {
             });
         }
 
-        const { otherUserId } = parsed.data;
+        const { otherUserId, otherUserEmail } = parsed.data;
         const requesterId = String(req.user.id);
 
-        if (String(otherUserId) === requesterId) {
-            return res.status(400).json({ error: 'Cannot start a DM with yourself' });
-        }
-
         const conversationId = await withTransaction(async (client) => {
-            const pairLockKey = buildPairLockKey(requesterId, otherUserId);
+            let resolvedOtherUserId = otherUserId;
+
+            if (!resolvedOtherUserId && otherUserEmail) {
+                const userFromEmailResult = await client.query(
+                    `
+                        SELECT id
+                        FROM users
+                        WHERE lower(email) = lower($1)
+                        LIMIT 1
+                    `,
+                    [otherUserEmail]
+                );
+
+                if (userFromEmailResult.rowCount === 0) {
+                    const notFound = new Error('User not found');
+                    notFound.status = 404;
+                    throw notFound;
+                }
+
+                resolvedOtherUserId = userFromEmailResult.rows[0].id;
+            }
+
+            if (!resolvedOtherUserId) {
+                const badRequest = new Error('otherUserId or otherUserEmail is required');
+                badRequest.status = 400;
+                throw badRequest;
+            }
+
+            if (String(resolvedOtherUserId) === requesterId) {
+                const badRequest = new Error('Cannot start a DM with yourself');
+                badRequest.status = 400;
+                throw badRequest;
+            }
+
+            const pairLockKey = buildPairLockKey(requesterId, resolvedOtherUserId);
             await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [pairLockKey]);
 
             const existingConversation = await client.query(
@@ -219,14 +264,14 @@ async function startDmConversation(req, res, next) {
                        AND BOOL_OR(cm.user_id = $2::uuid)
                     LIMIT 1
                 `,
-                [requesterId, otherUserId]
+                [requesterId, resolvedOtherUserId]
             );
 
             if (existingConversation.rowCount > 0) {
                 return existingConversation.rows[0].id;
             }
 
-            const userExistsResult = await client.query('SELECT id FROM users WHERE id = $1 LIMIT 1', [otherUserId]);
+            const userExistsResult = await client.query('SELECT id FROM users WHERE id = $1 LIMIT 1', [resolvedOtherUserId]);
             if (userExistsResult.rowCount === 0) {
                 const notFound = new Error('User not found');
                 notFound.status = 404;
@@ -247,7 +292,7 @@ async function startDmConversation(req, res, next) {
                     INSERT INTO conversation_members (conversation_id, user_id)
                     VALUES ($1, $2), ($1, $3)
                 `,
-                [createdConversationId, requesterId, otherUserId]
+                [createdConversationId, requesterId, resolvedOtherUserId]
             );
 
             return createdConversationId;
@@ -427,8 +472,43 @@ async function markConversationRead(req, res, next) {
     }
 }
 
+async function searchUsersByEmail(req, res, next) {
+    try {
+        const parsed = userSearchSchema.safeParse(req.query || {});
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Validation failed',
+                details: formatValidationError(parsed.error),
+            });
+        }
+
+        const result = await query(
+            `
+                SELECT id, email, full_name
+                FROM users
+                WHERE id <> $1
+                  AND email ILIKE $2
+                ORDER BY email ASC
+                LIMIT 10
+            `,
+            [req.user.id, `%${parsed.data.query}%`]
+        );
+
+        const items = result.rows.map((row) => ({
+            id: row.id,
+            email: row.email,
+            fullName: row.full_name || null,
+        }));
+
+        return res.json({ items });
+    } catch (error) {
+        return next(error);
+    }
+}
+
 module.exports = {
     startDmConversation,
+    searchUsersByEmail,
     listConversations,
     getConversationMessages,
     sendMessage,

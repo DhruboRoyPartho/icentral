@@ -30,7 +30,7 @@ const corsOptions = {
 };
 
 const io = new Server(server, {
-    path: '/chat/socket.io',
+    path: '/socket.io',
     cors: corsOptions,
 });
 
@@ -51,13 +51,14 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
     return res.json({
         health: 'Chat service OK',
-        socketPath: '/chat/socket.io',
+        socketPath: '/socket.io',
         endpoints: [
-            'POST /chat/conversations/dm',
-            'GET /chat/conversations',
-            'GET /chat/conversations/:id/messages',
-            'POST /chat/conversations/:id/messages',
-            'POST /chat/conversations/:id/read',
+            'GET /users/search?query=',
+            'POST /conversations/dm',
+            'GET /conversations',
+            'GET /conversations/:id/messages',
+            'POST /conversations/:id/messages',
+            'POST /conversations/:id/read',
         ],
     });
 });
@@ -78,20 +79,29 @@ app.get('/health', async (req, res) => {
             status: 'ok',
         });
     } catch (error) {
+        const message = error.message || 'Unknown database error';
+        const ipv6Unreachable = /ENETUNREACH/i.test(message) && /\b[0-9a-f:]{8,}:5432\b/i.test(message);
         return res.status(503).json({
             service: 'chat-service',
             status: 'degraded',
-            error: error.message,
+            error: message,
+            ...(ipv6Unreachable
+                ? {
+                    hint: 'Supabase direct DB host resolved to IPv6 from this container. Use Supabase Session Pooler connection string (IPv4 reachable) in SUPABASE_DB_URL.',
+                }
+                : {}),
         });
     }
 });
 
-app.use('/chat', chatRoutes);
+app.use('/', chatRoutes);
 
 app.use((error, req, res, next) => {
     const statusCode = Number(error.status) || 500;
     const payload = {
-        error: statusCode >= 500 ? 'Internal server error' : error.message || 'Request failed',
+        error: statusCode >= 500 && !error.expose
+            ? 'Internal server error'
+            : error.message || 'Request failed',
     };
 
     if (error.details) {
