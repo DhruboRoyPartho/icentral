@@ -54,6 +54,10 @@ const initialFilters = {
 };
 const FEED_PAGE_LIMIT = 10;
 const CARD_NAV_IGNORE_SELECTOR = 'a,button,input,textarea,select,label,[role="button"],.post-comments-panel,[data-prevent-card-nav="true"]';
+const compactCountFormatter = new Intl.NumberFormat('en', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
 
 async function apiRequest(path, options = {}) {
   const storedToken = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
@@ -129,6 +133,12 @@ function getCommentCount(post) {
   );
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.trunc(value));
+}
+
+function formatCompactCount(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return '0';
+  return compactCountFormatter.format(Math.trunc(numericValue));
 }
 
 export default function HomeFeedPage() {
@@ -1009,31 +1019,46 @@ export default function HomeFeedPage() {
                     <button
                       className={`reddit-action-btn vote-btn ${item.userVote === 'up' ? 'is-active' : ''}`}
                       type="button"
+                      aria-label="Upvote"
                       aria-pressed={item.userVote === 'up'}
                       disabled={actionBusyPostId === item.id || item.status === 'archived'}
                       onClick={() => handleVote(item, 'up')}
                     >
-                      Upvote
+                      <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true">
+                        <polyline points="6 11 10 7 14 11" />
+                        <line x1="10" y1="7" x2="10" y2="14" />
+                      </svg>
+                      <span className="sr-only">Upvote</span>
                     </button>
-                    <span className="reddit-vote-count" aria-live="polite">{getBaseVoteScore(item)}</span>
+                    <span className="reddit-vote-count" aria-live="polite">{formatCompactCount(getBaseVoteScore(item))}</span>
                     <button
                       className={`reddit-action-btn vote-btn ${item.userVote === 'down' ? 'is-active' : ''}`}
                       type="button"
+                      aria-label="Downvote"
                       aria-pressed={item.userVote === 'down'}
                       disabled={actionBusyPostId === item.id || item.status === 'archived'}
                       onClick={() => handleVote(item, 'down')}
                     >
-                      Downvote
+                      <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true">
+                        <polyline points="6 9 10 13 14 9" />
+                        <line x1="10" y1="6" x2="10" y2="13" />
+                      </svg>
+                      <span className="sr-only">Downvote</span>
                     </button>
                   </div>
 
                   <button
-                    className="reddit-action-btn"
+                    className="reddit-action-btn reddit-metric-btn"
                     type="button"
+                    aria-label={`Comments ${getCommentCount(item)}`}
                     aria-expanded={openCommentsPostId === item.id}
                     onClick={() => toggleComments(item)}
                   >
-                    Comments {getCommentCount(item)}
+                    <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M4.5 4.5h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3H4.5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2Z" />
+                    </svg>
+                    <span className="reddit-action-count">{formatCompactCount(getCommentCount(item))}</span>
+                    <span className="sr-only">Comments</span>
                   </button>
 
                   {(isModerator || isPostOwner(item)) && (
