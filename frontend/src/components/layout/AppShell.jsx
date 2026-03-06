@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
-import { getUnreadJobApplicationNotificationsForUser } from '../../utils/jobPortalStorage';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -59,71 +58,24 @@ function formatRelativeTime(value) {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
 }
 
-function mapAnnouncementItem(post) {
-  return {
-    id: `announcement-${post.id}`,
-    kind: 'announcement',
-    badge: 'AN',
-    title: post.title || 'New announcement posted',
-    subtitle: formatRelativeTime(post.createdAt),
-    createdAt: post.createdAt || null,
-  };
-}
+function mapUnseenConversationItem(item) {
+  const conversationId = item?.conversationId ? String(item.conversationId) : '';
+  if (!conversationId) return null;
 
-function mapVerificationItem(item, isModerator) {
-  const normalizedStatus = String(item?.status || '').toLowerCase();
-  const createdAt = item?.reviewedAt || item?.updatedAt || item?.createdAt || null;
-  if (isModerator) {
-    return {
-      id: `verification-${item.id}`,
-      kind: 'verification',
-      badge: 'VF',
-      title: `${item?.applicant?.fullName || 'Alumni'} requested verification`,
-      subtitle: formatRelativeTime(createdAt),
-      createdAt,
-    };
-  }
+  const unreadCount = Number(item?.unreadCount || 0);
+  if (unreadCount <= 0) return null;
 
-  if (normalizedStatus === 'approved') {
-    return {
-      id: `verification-${item.id}`,
-      kind: 'verification',
-      badge: 'VF',
-      title: 'Verification approved',
-      subtitle: formatRelativeTime(createdAt),
-      createdAt,
-    };
-  }
-
-  if (normalizedStatus === 'rejected') {
-    return {
-      id: `verification-${item.id}`,
-      kind: 'verification',
-      badge: 'VF',
-      title: 'Verification rejected',
-      subtitle: formatRelativeTime(createdAt),
-      createdAt,
-    };
-  }
+  const createdAt = item?.lastMessageAt || null;
+  const participantLabel = item?.otherUserEmail || item?.otherUserId || 'Unknown user';
 
   return {
-    id: `verification-${item.id}`,
-    kind: 'verification',
-    badge: 'VF',
-    title: 'Verification pending review',
-    subtitle: formatRelativeTime(createdAt),
+    id: `chat-${conversationId}`,
+    conversationId,
+    kind: 'chat',
+    badge: 'DM',
+    title: participantLabel,
+    subtitle: `${unreadCount} unseen message${unreadCount === 1 ? '' : 's'} - ${formatRelativeTime(createdAt)}`,
     createdAt,
-  };
-}
-
-function mapJobNotificationItem(item) {
-  return {
-    id: `job-${item.id}`,
-    kind: 'job',
-    badge: 'JB',
-    title: `${item?.applicantName || 'A student'} applied for ${item?.jobTitle || 'your job post'}`,
-    subtitle: formatRelativeTime(item?.createdAt),
-    createdAt: item?.createdAt || null,
   };
 }
 
@@ -158,13 +110,11 @@ export default function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, isAuthenticated, isModerator, clearAuthSession } = useAuth();
-  const [recentNotifications, setRecentNotifications] = useState([]);
-  const [loadingRecentNotifications, setLoadingRecentNotifications] = useState(true);
+  const [recentUnseenMessages, setRecentUnseenMessages] = useState([]);
+  const [loadingRecentUnseenMessages, setLoadingRecentUnseenMessages] = useState(true);
 
   const profileName = user?.full_name || user?.name || 'Guest User';
   const roleLabel = user?.role ? String(user.role) : 'guest';
-  const normalizedRole = String(user?.role || '').toLowerCase();
-  const isAlumni = normalizedRole === 'alumni';
   const isChatRoute = location.pathname.startsWith('/chat');
   const initials = profileName
     .split(' ')
@@ -179,72 +129,78 @@ export default function AppShell() {
   }
 
   useEffect(() => {
-    const controller = new AbortController();
-    let isMounted = true;
-
-    async function loadRecentNotifications() {
-      setLoadingRecentNotifications(true);
-      const allItems = [];
-
-      try {
-        const announcementsResult = await apiRequest('/posts/feed?type=ANNOUNCEMENT&status=published&limit=8&offset=0', {
-          signal: controller.signal,
-        });
-        const announcements = Array.isArray(announcementsResult?.data) ? announcementsResult.data : [];
-        allItems.push(...announcements.map(mapAnnouncementItem));
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          console.warn('Could not load announcement notifications', error);
-        }
-      }
-
-      if (isAuthenticated && (isModerator || isAlumni)) {
-        try {
-          const statusParam = isModerator ? 'pending' : 'all';
-          const verificationResult = await apiRequest(`/users/notifications/alumni-verifications?status=${statusParam}&limit=10`, {
-            signal: controller.signal,
-          });
-          const items = Array.isArray(verificationResult?.data) ? verificationResult.data : [];
-          allItems.push(...items.map((item) => mapVerificationItem(item, isModerator)));
-        } catch (error) {
-          if (error.name !== 'AbortError') {
-            console.warn('Could not load verification notifications', error);
-          }
-        }
-      }
-
-      if (isAuthenticated && user?.id) {
-        try {
-          const jobItems = await getUnreadJobApplicationNotificationsForUser(user.id, { signal: controller.signal });
-          allItems.push(...jobItems.map(mapJobNotificationItem));
-        } catch (error) {
-          if (error.name !== 'AbortError') {
-            console.warn('Could not load job notifications', error);
-          }
-        }
-      }
-
-      if (!isMounted) return;
-
-      const sorted = allItems
-        .slice()
-        .sort((a, b) => {
-          const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return bTime - aTime;
-        })
-        .slice(0, 5);
-
-      setRecentNotifications(sorted);
-      setLoadingRecentNotifications(false);
+    if (!isAuthenticated) {
+      setRecentUnseenMessages([]);
+      setLoadingRecentUnseenMessages(false);
+      return undefined;
     }
 
-    loadRecentNotifications();
+    const controller = new AbortController();
+    let isMounted = true;
+    let isFetching = false;
+
+    async function loadRecentUnseenMessages(showLoading = true) {
+      if (isFetching) return;
+      isFetching = true;
+      if (showLoading) {
+        setLoadingRecentUnseenMessages(true);
+      }
+
+      try {
+        const conversationsResult = await apiRequest('/chat/conversations', {
+          signal: controller.signal,
+        });
+        const conversations = Array.isArray(conversationsResult?.items)
+          ? conversationsResult.items
+          : (Array.isArray(conversationsResult) ? conversationsResult : []);
+
+        const sorted = conversations
+          .map(mapUnseenConversationItem)
+          .filter(Boolean)
+          .sort((a, b) => {
+            const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return bTime - aTime;
+          })
+          .slice(0, 5);
+
+        if (!isMounted) return;
+        setRecentUnseenMessages(sorted);
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          console.warn('Could not load unseen messages', error);
+          if (isMounted) {
+            setRecentUnseenMessages([]);
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setLoadingRecentUnseenMessages(false);
+        }
+        isFetching = false;
+      }
+    }
+
+    loadRecentUnseenMessages(true);
+
+    const refreshInterval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      loadRecentUnseenMessages(false);
+    }, 15000);
+
+    function handleWindowFocus() {
+      loadRecentUnseenMessages(false);
+    }
+
+    window.addEventListener('focus', handleWindowFocus);
+
     return () => {
       isMounted = false;
       controller.abort();
+      window.clearInterval(refreshInterval);
+      window.removeEventListener('focus', handleWindowFocus);
     };
-  }, [isAuthenticated, isModerator, isAlumni, user?.id]);
+  }, [isAuthenticated, location.pathname, user?.id]);
 
   return (
     <div className="social-shell">
@@ -345,35 +301,35 @@ export default function AppShell() {
             <section className="panel sidebar-panel compact-panel">
               <div className="panel-header">
                 <div>
-                  <p className="eyebrow">Notifications</p>
-                  <h3>Recent</h3>
+                  <p className="eyebrow">Messages</p>
+                  <h3>Recent unseen</h3>
                 </div>
               </div>
 
               <div className="contact-list">
-                {loadingRecentNotifications ? (
+                {loadingRecentUnseenMessages ? (
                   <div className="contact-item">
                     <span className="contact-avatar contact-avatar-group" aria-hidden="true">..</span>
                     <div>
-                      <strong>Loading notifications</strong>
+                      <strong>Loading unseen messages</strong>
                       <small>Fetching latest updates</small>
                     </div>
                   </div>
-                ) : recentNotifications.length === 0 ? (
+                ) : recentUnseenMessages.length === 0 ? (
                   <div className="contact-item">
-                    <span className="contact-avatar contact-avatar-group" aria-hidden="true">NA</span>
+                    <span className="contact-avatar contact-avatar-group" aria-hidden="true">DM</span>
                     <div>
-                      <strong>No recent notifications</strong>
+                      <strong>No unseen messages</strong>
                       <small>You're all caught up</small>
                     </div>
                   </div>
                 ) : (
-                  recentNotifications.map((item) => (
+                  recentUnseenMessages.map((item) => (
                     <button
                       type="button"
                       className={`contact-item contact-item-action notif-${item.kind || 'neutral'}`}
                       key={item.id}
-                      onClick={() => navigate('/notifications')}
+                      onClick={() => navigate('/chat', { state: { preferredConversationId: item.conversationId } })}
                     >
                       <span className="contact-avatar contact-avatar-group" aria-hidden="true">{item.badge}</span>
                       <div>
