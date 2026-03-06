@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
+import { getUnreadJobApplicationNotificationsForUser } from '../../utils/jobPortalStorage';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -79,6 +80,81 @@ function mapUnseenConversationItem(item) {
   };
 }
 
+function mapAnnouncementNotification(post) {
+  return {
+    id: `announcement-${post.id}`,
+    source: 'api',
+    kind: 'announcement',
+    badge: 'AN',
+    title: post.title || 'New announcement posted',
+    subtitle: formatRelativeTime(post.createdAt),
+    createdAt: post.createdAt || null,
+  };
+}
+
+function mapVerificationNotification(item, isModerator) {
+  const normalizedStatus = String(item?.status || '').toLowerCase();
+  const createdAt = item?.reviewedAt || item?.updatedAt || item?.createdAt || null;
+
+  if (isModerator) {
+    return {
+      id: `verification-${item.id}`,
+      source: 'api',
+      kind: 'verification',
+      badge: 'VF',
+      title: `${item?.applicant?.fullName || 'Alumni'} requested verification`,
+      subtitle: formatRelativeTime(createdAt),
+      createdAt,
+    };
+  }
+
+  if (normalizedStatus === 'approved') {
+    return {
+      id: `verification-${item.id}`,
+      source: 'api',
+      kind: 'verification',
+      badge: 'VF',
+      title: 'Verification approved',
+      subtitle: formatRelativeTime(createdAt),
+      createdAt,
+    };
+  }
+
+  if (normalizedStatus === 'rejected') {
+    return {
+      id: `verification-${item.id}`,
+      source: 'api',
+      kind: 'verification',
+      badge: 'VF',
+      title: 'Verification rejected',
+      subtitle: formatRelativeTime(createdAt),
+      createdAt,
+    };
+  }
+
+  return {
+    id: `verification-${item.id}`,
+    source: 'api',
+    kind: 'verification',
+    badge: 'VF',
+    title: 'Verification pending review',
+    subtitle: formatRelativeTime(createdAt),
+    createdAt,
+  };
+}
+
+function mapJobNotificationItem(item) {
+  return {
+    id: String(item?.id || ''),
+    source: 'job-service',
+    kind: 'job',
+    badge: 'JB',
+    title: `${item?.applicantName || 'A student'} applied for ${item?.jobTitle || 'your job post'}`,
+    subtitle: formatRelativeTime(item?.createdAt),
+    createdAt: item?.createdAt || null,
+  };
+}
+
 function SidebarItem({ item, canAccess }) {
   if (!canAccess) {
     return (
@@ -112,9 +188,13 @@ export default function AppShell() {
   const { user, isAuthenticated, isModerator, clearAuthSession } = useAuth();
   const [recentUnseenMessages, setRecentUnseenMessages] = useState([]);
   const [loadingRecentUnseenMessages, setLoadingRecentUnseenMessages] = useState(true);
+  const [recentNotifications, setRecentNotifications] = useState([]);
+  const [loadingRecentNotifications, setLoadingRecentNotifications] = useState(true);
 
   const profileName = user?.full_name || user?.name || 'Guest User';
   const roleLabel = user?.role ? String(user.role) : 'guest';
+  const normalizedRole = String(user?.role || '').toLowerCase();
+  const isAlumni = normalizedRole === 'alumni';
   const isChatRoute = location.pathname.startsWith('/chat');
   const initials = profileName
     .split(' ')
@@ -201,6 +281,130 @@ export default function AppShell() {
       window.removeEventListener('focus', handleWindowFocus);
     };
   }, [isAuthenticated, location.pathname, user?.id]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let isMounted = true;
+    let isFetching = false;
+
+    async function loadRecentNotifications(showLoading = true) {
+      if (isFetching) return;
+      isFetching = true;
+      if (showLoading) {
+        setLoadingRecentNotifications(true);
+      }
+
+      try {
+        const allItems = [];
+        let readKeySet = new Set();
+        let lastSeenMs = NaN;
+
+        if (isAuthenticated) {
+          try {
+            const stateResult = await apiRequest('/users/notifications/state', {
+              signal: controller.signal,
+            });
+            const lastSeenAt = stateResult?.data?.lastSeenAt || null;
+            const readKeys = Array.isArray(stateResult?.data?.readKeys)
+              ? stateResult.data.readKeys.map((value) => String(value))
+              : [];
+            readKeySet = new Set(readKeys);
+            lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
+          } catch (error) {
+            if (error.name !== 'AbortError') {
+              console.warn('Could not load notification read state', error);
+            }
+          }
+        }
+
+        try {
+          const announcementsResult = await apiRequest('/posts/feed?type=ANNOUNCEMENT&status=published&limit=12&offset=0', {
+            signal: controller.signal,
+          });
+          const announcements = Array.isArray(announcementsResult?.data) ? announcementsResult.data : [];
+          allItems.push(...announcements.map(mapAnnouncementNotification));
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            console.warn('Could not load announcement notifications', error);
+          }
+        }
+
+        if (isAuthenticated && (isModerator || isAlumni)) {
+          try {
+            const statusParam = isModerator ? 'pending' : 'all';
+            const verificationResult = await apiRequest(`/users/notifications/alumni-verifications?status=${statusParam}&limit=20`, {
+              signal: controller.signal,
+            });
+            const items = Array.isArray(verificationResult?.data) ? verificationResult.data : [];
+            allItems.push(...items.map((item) => mapVerificationNotification(item, isModerator)));
+          } catch (error) {
+            if (error.name !== 'AbortError') {
+              console.warn('Could not load verification notifications', error);
+            }
+          }
+        }
+
+        if (isAuthenticated && user?.id) {
+          try {
+            const jobItems = await getUnreadJobApplicationNotificationsForUser(user.id, { signal: controller.signal });
+            allItems.push(...jobItems.map(mapJobNotificationItem));
+          } catch (error) {
+            if (error.name !== 'AbortError') {
+              console.warn('Could not load job notifications', error);
+            }
+          }
+        }
+
+        if (!isMounted) return;
+
+        const sorted = allItems
+          .slice()
+          .sort((a, b) => {
+            const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return bTime - aTime;
+          });
+
+        const unreadFiltered = sorted.filter((item) => {
+          if (!isAuthenticated) return true;
+          if (item.source === 'job-service') return true;
+          if (readKeySet.has(String(item.id))) return false;
+          if (!item.createdAt) return true;
+          const createdAtMs = new Date(item.createdAt).getTime();
+          if (Number.isNaN(createdAtMs)) return true;
+          if (Number.isNaN(lastSeenMs)) return true;
+          return createdAtMs > lastSeenMs;
+        });
+
+        setRecentNotifications(unreadFiltered.slice(0, 5));
+      } finally {
+        if (isMounted) {
+          setLoadingRecentNotifications(false);
+        }
+        isFetching = false;
+      }
+    }
+
+    loadRecentNotifications(true);
+
+    const refreshInterval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      loadRecentNotifications(false);
+    }, 20000);
+
+    function handleWindowFocus() {
+      loadRecentNotifications(false);
+    }
+
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+      window.clearInterval(refreshInterval);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [isAuthenticated, isModerator, isAlumni, location.pathname, user?.id]);
 
   return (
     <div className="social-shell">
@@ -330,6 +534,50 @@ export default function AppShell() {
                       className={`contact-item contact-item-action notif-${item.kind || 'neutral'}`}
                       key={item.id}
                       onClick={() => navigate('/chat', { state: { preferredConversationId: item.conversationId } })}
+                    >
+                      <span className="contact-avatar contact-avatar-group" aria-hidden="true">{item.badge}</span>
+                      <div>
+                        <strong>{item.title}</strong>
+                        <small>{item.subtitle}</small>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="panel sidebar-panel compact-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Notifications</p>
+                  <h3>Recent</h3>
+                </div>
+              </div>
+
+              <div className="contact-list">
+                {loadingRecentNotifications ? (
+                  <div className="contact-item">
+                    <span className="contact-avatar contact-avatar-group" aria-hidden="true">..</span>
+                    <div>
+                      <strong>Loading notifications</strong>
+                      <small>Fetching latest updates</small>
+                    </div>
+                  </div>
+                ) : recentNotifications.length === 0 ? (
+                  <div className="contact-item">
+                    <span className="contact-avatar contact-avatar-group" aria-hidden="true">NA</span>
+                    <div>
+                      <strong>No recent notifications</strong>
+                      <small>You're all caught up</small>
+                    </div>
+                  </div>
+                ) : (
+                  recentNotifications.map((item) => (
+                    <button
+                      type="button"
+                      className={`contact-item contact-item-action notif-${item.kind || 'neutral'}`}
+                      key={item.id}
+                      onClick={() => navigate('/notifications')}
                     >
                       <span className="contact-avatar contact-avatar-group" aria-hidden="true">{item.badge}</span>
                       <div>
