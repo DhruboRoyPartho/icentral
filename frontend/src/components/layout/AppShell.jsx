@@ -318,19 +318,6 @@ export default function AppShell() {
       <div className={`social-layout${isChatRoute ? ' is-chat-route' : ''}`}>
         {!isChatRoute ? (
           <aside className="feed-sidebar feed-sidebar-left" aria-label="Feed sections">
-            <section className="panel sidebar-panel compact-panel">
-              <div className="session-card">
-                <p>
-                  <span>Signed in as</span>
-                  <strong>{profileName}</strong>
-                </p>
-                <p>
-                  <span>Role</span>
-                  <strong>{roleLabel}</strong>
-                </p>
-              </div>
-            </section>
-
             <section className="panel sidebar-panel">
               <div className="panel-header">
                 <div>
