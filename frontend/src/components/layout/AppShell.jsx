@@ -186,6 +186,8 @@ export default function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, isAuthenticated, isModerator, clearAuthSession } = useAuth();
+  const [globalSearchInput, setGlobalSearchInput] = useState('');
+  const [isGlobalSearchSubmitting, setIsGlobalSearchSubmitting] = useState(false);
   const [recentUnseenMessages, setRecentUnseenMessages] = useState([]);
   const [loadingRecentUnseenMessages, setLoadingRecentUnseenMessages] = useState(true);
   const [recentNotifications, setRecentNotifications] = useState([]);
@@ -207,6 +209,34 @@ export default function AppShell() {
     clearAuthSession();
     navigate('/login');
   }
+
+  function handleGlobalSearchSubmit(event) {
+    event.preventDefault();
+    const q = globalSearchInput.trim();
+
+    if (!q) {
+      setIsGlobalSearchSubmitting(false);
+      navigate('/search');
+      return;
+    }
+
+    const targetPath = `/search?q=${encodeURIComponent(q)}`;
+    const currentPath = `${location.pathname}${location.search}`;
+    if (targetPath === currentPath) {
+      setIsGlobalSearchSubmitting(false);
+      return;
+    }
+
+    setIsGlobalSearchSubmitting(true);
+    navigate(targetPath);
+  }
+
+  useEffect(() => {
+    setIsGlobalSearchSubmitting(false);
+    if (!location.pathname.startsWith('/search')) return;
+    const value = new URLSearchParams(location.search).get('q') || '';
+    setGlobalSearchInput(value);
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -413,14 +443,35 @@ export default function AppShell() {
           <Link className="brand-badge topbar-brand-link" to="/home" aria-label="Go to homepage">
             IC
           </Link>
-          <label className="topbar-search" htmlFor="global-search">
+          <form className="topbar-search" onSubmit={handleGlobalSearchSubmit} role="search" aria-label="Search posts">
             <span className="topbar-search-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" focusable="false">
                 <path d="M10 3a7 7 0 1 1 0 14a7 7 0 0 1 0-14zm0 2a5 5 0 1 0 .001 10.001A5 5 0 0 0 10 5zm8.707 11.293l2 2a1 1 0 0 1-1.414 1.414l-2-2a1 1 0 0 1 1.414-1.414z" />
               </svg>
             </span>
-            <input id="global-search" type="search" placeholder="Search ICEntral" />
-          </label>
+            <input
+              id="global-search"
+              type="search"
+              placeholder="Search posts..."
+              value={globalSearchInput}
+              onChange={(event) => setGlobalSearchInput(event.target.value)}
+              autoComplete="off"
+            />
+            <button
+              type="submit"
+              className="topbar-search-submit"
+              aria-label="Search"
+              disabled={isGlobalSearchSubmitting}
+            >
+              {isGlobalSearchSubmitting ? (
+                <span className="topbar-search-spinner" aria-hidden="true" />
+              ) : (
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M10 3a7 7 0 1 1 0 14a7 7 0 0 1 0-14zm0 2a5 5 0 1 0 .001 10.001A5 5 0 0 0 10 5zm8.707 11.293l2 2a1 1 0 0 1-1.414 1.414l-2-2a1 1 0 0 1 1.414-1.414z" />
+                </svg>
+              )}
+            </button>
+          </form>
         </div>
 
         <nav className="topbar-nav" aria-label="Primary">
