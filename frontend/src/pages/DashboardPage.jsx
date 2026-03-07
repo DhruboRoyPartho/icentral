@@ -11,6 +11,12 @@ import {
 } from '../utils/profileApi';
 
 const EDITABLE_VISIBILITY_FIELDS = ['bio', 'location', 'education', 'work'];
+const VISIBILITY_LABELS = {
+  bio: 'Bio',
+  location: 'Location',
+  education: 'Education',
+  work: 'Work',
+};
 const DEFAULT_VISIBILITY = {
   bio: true,
   location: true,
@@ -400,11 +406,20 @@ export default function DashboardPage() {
 
     try {
       let latestProfile = profile;
+      let avatarUpdateError = '';
 
       if (editAvatarFile) {
-        latestProfile = await updateCurrentUserAvatar({ file: editAvatarFile });
+        try {
+          latestProfile = await updateCurrentUserAvatar({ file: editAvatarFile });
+        } catch (error) {
+          avatarUpdateError = error.message || 'Could not update avatar.';
+        }
       } else if (safeText(editAvatarUrl)) {
-        latestProfile = await updateCurrentUserAvatar({ avatarUrl: safeText(editAvatarUrl) });
+        try {
+          latestProfile = await updateCurrentUserAvatar({ avatarUrl: safeText(editAvatarUrl) });
+        } catch (error) {
+          avatarUpdateError = error.message || 'Could not update avatar.';
+        }
       }
 
       const updatedProfile = await updateCurrentUserProfile({
@@ -419,7 +434,12 @@ export default function DashboardPage() {
       const finalProfile = updatedProfile || latestProfile;
       setProfile(finalProfile);
       syncAuthUser(finalProfile);
-      setBanner({ type: 'success', message: 'Profile updated.' });
+      setBanner({
+        type: 'success',
+        message: avatarUpdateError
+          ? `Profile updated. Avatar not changed: ${avatarUpdateError}`
+          : 'Profile updated.',
+      });
       setIsEditOpen(false);
     } catch (error) {
       setBanner({ type: 'error', message: `Could not update profile: ${error.message}` });
@@ -737,10 +757,10 @@ export default function DashboardPage() {
             </div>
 
             <form className="profile-edit-form" onSubmit={handleSaveProfile}>
-              <div className="profile-edit-avatar-row">
+              <section className="profile-edit-section profile-edit-avatar-section">
                 <button
                   type="button"
-                  className="profile-hero-avatar profile-avatar-action"
+                  className="profile-hero-avatar profile-avatar-action profile-edit-avatar-preview"
                   onClick={() => avatarFileInputRef.current?.click()}
                   aria-label="Upload avatar"
                 >
@@ -752,20 +772,39 @@ export default function DashboardPage() {
                     <span>{profileInitials}</span>
                   )}
                 </button>
+
                 <div className="profile-edit-avatar-controls">
-                  <input
-                    ref={avatarFileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) => {
-                      const [file] = Array.from(event.target.files || []);
-                      if (!file) {
-                        setEditAvatarFile(null);
-                        return;
-                      }
-                      setEditAvatarFile(file);
-                    }}
-                  />
+                  <div className="profile-edit-upload-row">
+                    <input
+                      ref={avatarFileInputRef}
+                      className="profile-edit-file-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        const [file] = Array.from(event.target.files || []);
+                        if (!file) {
+                          setEditAvatarFile(null);
+                          return;
+                        }
+                        setEditAvatarFile(file);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-soft"
+                      onClick={() => avatarFileInputRef.current?.click()}
+                    >
+                      {editAvatarFile ? 'Replace photo' : 'Upload photo'}
+                    </button>
+                    {editAvatarFile && (
+                      <button type="button" className="btn btn-soft" onClick={() => setEditAvatarFile(null)}>
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <p className="profile-edit-upload-hint">
+                    {editAvatarFile ? `Selected: ${editAvatarFile.name}` : 'No file selected'}
+                  </p>
                   <label>
                     <span>Avatar URL (fallback)</span>
                     <input
@@ -776,74 +815,99 @@ export default function DashboardPage() {
                     />
                   </label>
                 </div>
-              </div>
+              </section>
 
-              <label>
-                <span>Name</span>
-                <input
-                  type="text"
-                  value={editForm.fullName}
-                  onChange={(event) => setEditForm((prev) => ({ ...prev, fullName: event.target.value }))}
-                  required
-                />
-              </label>
+              <section className="profile-edit-section">
+                <div className="profile-edit-section-head">
+                  <h4>Basic information</h4>
+                  <p>Update how your profile appears on dashboard and public profile.</p>
+                </div>
 
-              <label>
-                <span>Bio</span>
-                <textarea
-                  rows={3}
-                  value={editForm.bio}
-                  onChange={(event) => setEditForm((prev) => ({ ...prev, bio: event.target.value }))}
-                />
-              </label>
-
-              <label>
-                <span>Location</span>
-                <input
-                  type="text"
-                  value={editForm.location}
-                  onChange={(event) => setEditForm((prev) => ({ ...prev, location: event.target.value }))}
-                />
-              </label>
-
-              <label>
-                <span>Education</span>
-                <input
-                  type="text"
-                  value={editForm.education}
-                  onChange={(event) => setEditForm((prev) => ({ ...prev, education: event.target.value }))}
-                />
-              </label>
-
-              <label>
-                <span>Work</span>
-                <input
-                  type="text"
-                  value={editForm.work}
-                  onChange={(event) => setEditForm((prev) => ({ ...prev, work: event.target.value }))}
-                />
-              </label>
-
-              <div className="profile-visibility-grid">
-                {EDITABLE_VISIBILITY_FIELDS.map((field) => (
-                  <label key={field} className="check-row compact">
+                <div className="profile-edit-grid">
+                  <label className="profile-edit-field-wide">
+                    <span>Name</span>
                     <input
-                      type="checkbox"
-                      checked={Boolean(editForm.visibility[field])}
-                      onChange={(event) => setEditForm((prev) => ({
-                        ...prev,
-                        visibility: {
-                          ...prev.visibility,
-                          [field]: event.target.checked,
-                        },
-                      }))}
+                      type="text"
+                      value={editForm.fullName}
+                      onChange={(event) => setEditForm((prev) => ({ ...prev, fullName: event.target.value }))}
+                      required
                     />
-                    <span>Show {field}</span>
                   </label>
-                ))}
-              </div>
+
+                  <label className="profile-edit-field-wide">
+                    <span>Bio</span>
+                    <textarea
+                      rows={3}
+                      value={editForm.bio}
+                      onChange={(event) => setEditForm((prev) => ({ ...prev, bio: event.target.value }))}
+                    />
+                  </label>
+
+                  <label>
+                    <span>Location</span>
+                    <input
+                      type="text"
+                      value={editForm.location}
+                      onChange={(event) => setEditForm((prev) => ({ ...prev, location: event.target.value }))}
+                    />
+                  </label>
+
+                  <label>
+                    <span>Education</span>
+                    <input
+                      type="text"
+                      value={editForm.education}
+                      onChange={(event) => setEditForm((prev) => ({ ...prev, education: event.target.value }))}
+                    />
+                  </label>
+
+                  <label className="profile-edit-field-wide">
+                    <span>Work</span>
+                    <input
+                      type="text"
+                      value={editForm.work}
+                      onChange={(event) => setEditForm((prev) => ({ ...prev, work: event.target.value }))}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className="profile-edit-section">
+                <div className="profile-edit-section-head">
+                  <h4>Visibility</h4>
+                  <p>Choose which details other users can see on your public profile.</p>
+                </div>
+                <div className="profile-visibility-grid profile-visibility-grid-enhanced">
+                  {EDITABLE_VISIBILITY_FIELDS.map((field) => {
+                    const checked = Boolean(editForm.visibility[field]);
+                    return (
+                      <label key={field} className="profile-visibility-toggle">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => setEditForm((prev) => ({
+                            ...prev,
+                            visibility: {
+                              ...prev.visibility,
+                              [field]: event.target.checked,
+                            },
+                          }))}
+                        />
+                        <span className="profile-visibility-copy">
+                          <strong>{VISIBILITY_LABELS[field] || field}</strong>
+                          <small>{checked ? 'Visible to others' : 'Hidden from others'}</small>
+                        </span>
+                        <span className="profile-visibility-switch" aria-hidden="true" />
+                      </label>
+                    );
+                  })}
+                </div>
+              </section>
 
               <div className="profile-edit-actions">
+                <button type="button" className="btn btn-soft" onClick={closeEditProfileModal} disabled={savingProfile}>
+                  Cancel
+                </button>
                 <button type="submit" className="btn btn-primary-solid" disabled={savingProfile}>
                   {savingProfile ? 'Saving...' : 'Save changes'}
                 </button>

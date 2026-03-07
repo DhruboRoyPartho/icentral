@@ -53,6 +53,7 @@ const PROFILE_VISIBILITY_DEFAULTS = {
     work: true,
 };
 const AVATAR_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
+const AVATAR_BUCKET_RETRY_ATTEMPTS = 3;
 
 const avatarUpload = multer({
     storage: multer.memoryStorage(),
@@ -158,6 +159,27 @@ function normalizeTimestamp(value) {
 function formatSupabaseError(error) {
     if (!error) return 'Unknown database error';
     return error.message || error.details || 'Unknown database error';
+}
+
+function isBucketMissingError(error) {
+    if (!error) return false;
+    const message = String(error?.message || '').toLowerCase();
+    const details = String(error?.details || '').toLowerCase();
+    const code = String(error?.code || '').toLowerCase();
+    return (
+        message.includes('not found')
+        || message.includes('does not exist')
+        || message.includes('bucket not found')
+        || message.includes('bucket does not exist')
+        || details.includes('bucket not found')
+        || code === 'nosuchbucket'
+    );
+}
+
+function wait(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
 
 function verificationSchemaError(res) {
@@ -367,40 +389,84 @@ function runAvatarUpload(req, res, next) {
 }
 
 async function ensureAvatarBucketAvailable() {
-    const { error: getBucketError } = await supabase.storage
-        .from(CONFIG.avatarBucket)
-        .list('', { limit: 1, offset: 0 });
+    let lastError = null;
 
-    if (!getBucketError) return;
+    for (let attempt = 0; attempt < AVATAR_BUCKET_RETRY_ATTEMPTS; attempt += 1) {
+        const { error: getBucketError } = await supabase.storage
+            .from(CONFIG.avatarBucket)
+            .list('', { limit: 1, offset: 0 });
 
-    const message = String(getBucketError?.message || '').toLowerCase();
-    const isMissingBucket = message.includes('not found') || message.includes('does not exist');
-    if (!isMissingBucket) {
-        throw getBucketError;
+        if (!getBucketError) return;
+        if (!isBucketMissingError(getBucketError)) {
+            throw getBucketError;
+        }
+
+        const { error: createError } = await supabase.storage.createBucket(CONFIG.avatarBucket, {
+            public: true,
+        });
+        if (createError && !String(createError.message || '').toLowerCase().includes('already exists')) {
+            throw createError;
+        }
+
+        lastError = getBucketError;
+        await wait(150 * (attempt + 1));
     }
 
-    const { error: createError } = await supabase.storage.createBucket(CONFIG.avatarBucket, {
-        public: true,
-    });
-    if (createError && !String(createError.message || '').toLowerCase().includes('already exists')) {
-        throw createError;
-    }
+    throw lastError || new Error(`Storage bucket "${CONFIG.avatarBucket}" is unavailable.`);
 }
 
-async function uploadAvatarAndResolveUrl(userId, file) {
-    await ensureAvatarBucketAvailable();
-
-    const sanitizedFileName = sanitizeFileName(file?.originalname || 'avatar');
-    const objectPath = `${userId}/${Date.now()}-${sanitizedFileName}`;
-    const { error: uploadError } = await supabase.storage
+async function uploadAvatarObject(objectPath, file) {
+    const { error } = await supabase.storage
         .from(CONFIG.avatarBucket)
         .upload(objectPath, file.buffer, {
             contentType: file.mimetype || 'application/octet-stream',
             upsert: true,
             cacheControl: '3600',
         });
+    return error || null;
+}
+
+function buildAvatarDataUrl(file) {
+    const mimeType = normalizeText(file?.mimetype).toLowerCase();
+    if (!mimeType.startsWith('image/')) {
+        const error = new Error('avatar must be an image file');
+        error.status = 400;
+        throw error;
+    }
+
+    const base64 = Buffer.from(file?.buffer || '').toString('base64');
+    if (!base64) {
+        const error = new Error('Could not process avatar image.');
+        error.status = 400;
+        throw error;
+    }
+
+    return `data:${mimeType};base64,${base64}`;
+}
+
+async function uploadAvatarAndResolveUrl(userId, file) {
+    try {
+        await ensureAvatarBucketAvailable();
+    } catch (error) {
+        if (isBucketMissingError(error)) {
+            return buildAvatarDataUrl(file);
+        }
+        throw error;
+    }
+
+    const sanitizedFileName = sanitizeFileName(file?.originalname || 'avatar');
+    const objectPath = `${userId}/${Date.now()}-${sanitizedFileName}`;
+    let uploadError = await uploadAvatarObject(objectPath, file);
+
+    if (uploadError && isBucketMissingError(uploadError)) {
+        await ensureAvatarBucketAvailable();
+        uploadError = await uploadAvatarObject(objectPath, file);
+    }
 
     if (uploadError) {
+        if (isBucketMissingError(uploadError)) {
+            return buildAvatarDataUrl(file);
+        }
         throw uploadError;
     }
 

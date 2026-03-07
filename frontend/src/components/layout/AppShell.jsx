@@ -192,6 +192,7 @@ export default function AppShell() {
   const [loadingRecentUnseenMessages, setLoadingRecentUnseenMessages] = useState(true);
   const [recentNotifications, setRecentNotifications] = useState([]);
   const [loadingRecentNotifications, setLoadingRecentNotifications] = useState(true);
+  const [avatarImageFailed, setAvatarImageFailed] = useState(false);
 
   const profileName = user?.full_name || user?.name || 'Guest User';
   const profileAvatarUrl = typeof user?.avatar_url === 'string' ? user.avatar_url.trim() : '';
@@ -208,6 +209,7 @@ export default function AppShell() {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() || '')
     .join('') || 'GU';
+  const showProfileImage = Boolean(profileAvatarUrl) && !avatarImageFailed;
 
   function handleLogout() {
     clearAuthSession();
@@ -241,6 +243,10 @@ export default function AppShell() {
     const value = new URLSearchParams(location.search).get('q') || '';
     setGlobalSearchInput(value);
   }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    setAvatarImageFailed(false);
+  }, [profileAvatarUrl]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -510,8 +516,18 @@ export default function AppShell() {
           </button>
 
           <button type="button" className="profile-btn" aria-label="Profile" onClick={() => navigate('/dashboard')}>
-            <span className="avatar-badge" aria-hidden="true">
-              {profileAvatarUrl ? <img src={profileAvatarUrl} alt="" /> : initials}
+            <span className={`avatar-badge${showProfileImage ? ' has-image' : ''}`} aria-hidden="true">
+              {showProfileImage ? (
+                <img
+                  src={profileAvatarUrl}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  onError={() => setAvatarImageFailed(true)}
+                />
+              ) : (
+                <span className="avatar-fallback">{initials}</span>
+              )}
             </span>
             <span className="profile-meta">
               <strong>{profileName}</strong>
