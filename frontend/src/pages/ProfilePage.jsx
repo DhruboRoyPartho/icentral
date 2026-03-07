@@ -107,6 +107,7 @@ export default function ProfilePage() {
 
   const displayName = safeText(profile?.fullName) || 'Community member';
   const avatarUrl = safeText(profile?.avatarUrl);
+  const bioText = safeText(profile?.bio);
   const highlights = [safeText(profile?.location), safeText(profile?.education), safeText(profile?.work)].filter(Boolean);
   const visibleDetails = useMemo(() => ([
     { label: 'Bio', value: safeText(profile?.bio) },
@@ -118,7 +119,7 @@ export default function ProfilePage() {
   const pageLoading = loadingProfile || loadingPosts;
 
   return (
-    <div className="dashboard-page profile-page-shell">
+    <div className="dashboard-page profile-page-shell public-profile-page">
       {pageError && (
         <section className="inline-alert" role="alert">
           <p>{pageError}</p>
@@ -135,12 +136,13 @@ export default function ProfilePage() {
           <div className="profile-hero-text">
             <h1>{displayName}</h1>
             {highlights.length > 0 ? (
-              <div className="profile-highlights">
+              <div className="profile-public-subline">
                 {highlights.map((item) => <span key={item}>{item}</span>)}
               </div>
             ) : (
               <p className="profile-muted-line">No public details shared yet.</p>
             )}
+            {bioText && <p className="profile-public-bio">{bioText}</p>}
           </div>
         </div>
       </section>
@@ -205,4 +207,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-

@@ -199,6 +199,9 @@ export default function AppShell() {
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isAlumni = normalizedRole === 'alumni';
   const isChatRoute = location.pathname.startsWith('/chat');
+  const isPublicProfileRoute = location.pathname.startsWith('/profile/');
+  const isDashboardRoute = location.pathname.startsWith('/dashboard');
+  const isProfileStyleRoute = isPublicProfileRoute || isDashboardRoute;
   const initials = profileName
     .split(' ')
     .filter(Boolean)
@@ -529,8 +532,8 @@ export default function AppShell() {
         </div>
       </header>
 
-      <div className={`social-layout${isChatRoute ? ' is-chat-route' : ''}`}>
-        {!isChatRoute ? (
+      <div className={`social-layout${isChatRoute ? ' is-chat-route' : ''}${isProfileStyleRoute ? ' is-profile-route' : ''}`}>
+        {!isChatRoute && !isProfileStyleRoute ? (
           <aside className="feed-sidebar feed-sidebar-left" aria-label="Feed sections">
             <section className="panel sidebar-panel">
               <div className="panel-header">
@@ -550,11 +553,11 @@ export default function AppShell() {
           </aside>
         ) : null}
 
-        <main className={`social-main-content${isChatRoute ? ' is-chat-layout' : ''}`}>
+        <main className={`social-main-content${isChatRoute ? ' is-chat-layout' : ''}${isProfileStyleRoute ? ' is-profile-layout' : ''}`}>
           <Outlet />
         </main>
 
-        {!isChatRoute ? (
+        {!isChatRoute && !isProfileStyleRoute ? (
           <aside className="feed-sidebar feed-sidebar-right" aria-label="Social sidebar">
             <section className="panel sidebar-panel compact-panel">
               <div className="panel-header">
