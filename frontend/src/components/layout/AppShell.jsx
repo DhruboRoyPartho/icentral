@@ -194,6 +194,7 @@ export default function AppShell() {
   const [loadingRecentNotifications, setLoadingRecentNotifications] = useState(true);
 
   const profileName = user?.full_name || user?.name || 'Guest User';
+  const profileAvatarUrl = typeof user?.avatar_url === 'string' ? user.avatar_url.trim() : '';
   const roleLabel = user?.role ? String(user.role) : 'guest';
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isAlumni = normalizedRole === 'alumni';
@@ -505,8 +506,10 @@ export default function AppShell() {
             </svg>
           </button>
 
-          <button type="button" className="profile-btn" aria-label="Profile">
-            <span className="avatar-badge" aria-hidden="true">{initials}</span>
+          <button type="button" className="profile-btn" aria-label="Profile" onClick={() => navigate('/dashboard')}>
+            <span className="avatar-badge" aria-hidden="true">
+              {profileAvatarUrl ? <img src={profileAvatarUrl} alt="" /> : initials}
+            </span>
             <span className="profile-meta">
               <strong>{profileName}</strong>
               <small>{roleLabel}</small>

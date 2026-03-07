@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import { openUserProfile } from '../utils/profileNavigation';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 const PAGE_SIZE = 30;
@@ -12,6 +13,7 @@ function normalizeConversations(items) {
       conversationId: item.conversationId,
       otherUserId: item.otherUserId || 'Unknown user',
       otherUserEmail: item.otherUserEmail || null,
+      otherUserFullName: item.otherUserFullName || null,
       lastMessage: item.lastMessage || null,
       lastMessageAt: item.lastMessageAt || null,
       unreadCount: Number(item.unreadCount || 0),
@@ -31,6 +33,7 @@ function upsertConversation(list, update) {
     conversationId: update.conversationId,
     otherUserId: update.otherUserId || 'Unknown user',
     otherUserEmail: update.otherUserEmail || null,
+    otherUserFullName: update.otherUserFullName || null,
     lastMessage: update.lastMessage || null,
     lastMessageAt: update.lastMessageAt || null,
     unreadCount: Number(update.unreadCount || 0),
@@ -214,6 +217,7 @@ export default function ChatPage() {
       if (!query) return true;
 
       const haystacks = [
+        item.otherUserFullName,
         item.otherUserEmail,
         item.otherUserId,
         item.lastMessage,
@@ -231,8 +235,17 @@ export default function ChatPage() {
   );
 
   const selectedConversationName = selectedConversation
-    ? (selectedConversation.otherUserEmail || selectedConversation.otherUserId)
+    ? (selectedConversation.otherUserFullName || selectedConversation.otherUserEmail || selectedConversation.otherUserId)
     : '';
+  const selectedConversationUserId = String(selectedConversation?.otherUserId || '').trim();
+
+  function navigateToMessageProfile(event, targetUserId) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    openUserProfile(navigate, targetUserId, currentUserId);
+  }
 
   const scrollMessagesToBottom = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -517,6 +530,7 @@ export default function ChatPage() {
         conversationId: selectedConversationId,
         otherUserId: selectedConversation?.otherUserId,
         otherUserEmail: selectedConversation?.otherUserEmail,
+        otherUserFullName: selectedConversation?.otherUserFullName,
         lastMessage: createdMessage.body,
         lastMessageAt: createdMessage.createdAt,
         unreadCount: 0,
@@ -635,7 +649,7 @@ export default function ChatPage() {
               <p className="chat-empty-text">No conversations found.</p>
             ) : (
               visibleConversations.map((conversation) => {
-                const displayName = conversation.otherUserEmail || conversation.otherUserId;
+                const displayName = conversation.otherUserFullName || conversation.otherUserEmail || conversation.otherUserId;
                 return (
                   <button
                     key={conversation.conversationId}
@@ -668,9 +682,29 @@ export default function ChatPage() {
             <>
               <header className="chat-thread-header">
                 <div className="chat-thread-identity">
-                  <span className="chat-thread-avatar" aria-hidden="true">{getAvatarLabel(selectedConversationName)}</span>
+                  <button
+                    type="button"
+                    className="chat-thread-avatar chat-profile-trigger"
+                    aria-label="View profile"
+                    onClick={(event) => navigateToMessageProfile(event, selectedConversationUserId)}
+                    disabled={!selectedConversationUserId}
+                  >
+                    {getAvatarLabel(selectedConversationName)}
+                  </button>
                   <div>
-                    <h3>{selectedConversationName}</h3>
+                    <h3>
+                      {selectedConversationUserId ? (
+                        <button
+                          type="button"
+                          className="chat-profile-name-btn"
+                          onClick={(event) => navigateToMessageProfile(event, selectedConversationUserId)}
+                        >
+                          {selectedConversationName}
+                        </button>
+                      ) : (
+                        selectedConversationName
+                      )}
+                    </h3>
                     <small>{socketConnected ? 'Active now' : 'Reconnecting...'}</small>
                   </div>
                 </div>
@@ -718,9 +752,15 @@ export default function ChatPage() {
                       return (
                         <article key={message.id} className={`chat-message-row${isOwn ? ' is-own' : ''}`}>
                           {!isOwn ? (
-                            <span className="chat-message-avatar" aria-hidden="true">
+                            <button
+                              type="button"
+                              className="chat-message-avatar chat-profile-trigger"
+                              onClick={(event) => navigateToMessageProfile(event, message.senderId)}
+                              disabled={!message.senderId}
+                              aria-label="View sender profile"
+                            >
                               {getAvatarLabel(selectedConversationName)}
-                            </span>
+                            </button>
                           ) : null}
                           <div className={`chat-message-bubble${isOwn ? ' is-own' : ''}`}>
                             <p>{message.body}</p>

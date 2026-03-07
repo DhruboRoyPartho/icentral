@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
@@ -13,8 +14,10 @@ const CONFIG = {
     supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY,
     schema: process.env.USER_SERVICE_SCHEMA || 'public',
     jwtSecret: process.env.JWT_SECRET || 'HelloWorldKey',
+    avatarBucket: process.env.SUPABASE_AVATAR_BUCKET || process.env.USER_AVATAR_BUCKET || 'avatars',
     tables: {
         users: process.env.USERS_TABLE || 'users',
+        userProfiles: process.env.USER_PROFILES_TABLE || 'user_profiles',
         alumniVerificationApplications: process.env.ALUMNI_VERIFICATION_TABLE || 'alumni_verification_applications',
         userNotificationStates: process.env.USER_NOTIFICATION_STATE_TABLE || 'user_notification_states',
         userNotificationReads: process.env.USER_NOTIFICATION_READS_TABLE || 'user_notification_reads',
@@ -42,6 +45,103 @@ function parseIntInRange(value, fallback, min, max) {
     return Math.min(Math.max(parsed, min), max);
 }
 
+const PROFILE_VISIBILITY_KEYS = ['bio', 'location', 'education', 'work'];
+const PROFILE_VISIBILITY_DEFAULTS = {
+    bio: true,
+    location: true,
+    education: true,
+    work: true,
+};
+const AVATAR_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
+
+const avatarUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: AVATAR_UPLOAD_MAX_BYTES },
+});
+
+function normalizeText(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeNullableText(value, { maxLength, allowNull = true } = {}) {
+    if (value === undefined) {
+        return { value: undefined };
+    }
+    if (value === null) {
+        return allowNull ? { value: null } : { error: 'Value cannot be null' };
+    }
+    if (typeof value !== 'string') {
+        return { error: 'Value must be a string' };
+    }
+
+    const text = value.trim();
+    if (!text) {
+        return allowNull ? { value: null } : { error: 'Value cannot be empty' };
+    }
+    if (Number.isFinite(maxLength) && text.length > maxLength) {
+        return { error: `Value is too long (max ${maxLength} characters)` };
+    }
+    return { value: text };
+}
+
+function parseProfileVisibility(value) {
+    if (value === undefined) return { value: undefined };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return { error: 'visibility must be an object' };
+    }
+
+    const updates = {};
+    for (const key of PROFILE_VISIBILITY_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+        if (typeof value[key] !== 'boolean') {
+            return { error: `visibility.${key} must be true or false` };
+        }
+        updates[key] = value[key];
+    }
+    return { value: updates };
+}
+
+function mergeProfileVisibility(...values) {
+    const merged = { ...PROFILE_VISIBILITY_DEFAULTS };
+
+    for (const current of values) {
+        if (!current || typeof current !== 'object' || Array.isArray(current)) continue;
+        for (const key of PROFILE_VISIBILITY_KEYS) {
+            if (!Object.prototype.hasOwnProperty.call(current, key)) continue;
+            const normalized = current[key];
+            if (typeof normalized === 'boolean') {
+                merged[key] = normalized;
+            }
+        }
+    }
+
+    return merged;
+}
+
+function sanitizeFileName(value) {
+    const fallback = 'avatar';
+    const source = normalizeText(value).toLowerCase();
+    if (!source) return fallback;
+    const cleaned = source
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return cleaned || fallback;
+}
+
+function parseAvatarUrlInput(value) {
+    const normalized = normalizeText(value);
+    if (!normalized) return { value: '' };
+    try {
+        const parsed = new URL(normalized);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return { error: 'avatarUrl must use http or https' };
+        }
+        return { value: parsed.toString() };
+    } catch {
+        return { error: 'avatarUrl must be a valid URL' };
+    }
+}
+
 function normalizeTimestamp(value) {
     if (value === undefined || value === null || value === '') {
         return { value: null };
@@ -63,6 +163,12 @@ function formatSupabaseError(error) {
 function verificationSchemaError(res) {
     return res.status(500).json({
         error: `Missing table "${CONFIG.tables.alumniVerificationApplications}". Run services/user-service/schema.sql first.`,
+    });
+}
+
+function profileSchemaError(res) {
+    return res.status(500).json({
+        error: `Missing table "${CONFIG.tables.userProfiles}". Run services/user-service/schema.sql first.`,
     });
 }
 
@@ -126,6 +232,274 @@ async function getUserById(userId) {
         throw error;
     }
     return data || null;
+}
+
+async function getUserProfileRow(userId) {
+    const { data, error } = await supabase
+        .from(CONFIG.tables.userProfiles)
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+    return data || null;
+}
+
+async function ensureUserProfileRow(userId, userRow = null) {
+    const existing = await getUserProfileRow(userId);
+    if (existing) return existing;
+
+    const { data, error } = await supabase
+        .from(CONFIG.tables.userProfiles)
+        .insert({
+            user_id: userId,
+            full_name: normalizeText(userRow?.full_name) || null,
+            visibility: PROFILE_VISIBILITY_DEFAULTS,
+            updated_at: new Date().toISOString(),
+        })
+        .select('*')
+        .single();
+
+    if (error) {
+        throw error;
+    }
+
+    return data;
+}
+
+function mapPrivateProfile(userRow, profileRow) {
+    const visibility = mergeProfileVisibility(profileRow?.visibility);
+    const fullName = normalizeText(profileRow?.full_name) || normalizeText(userRow?.full_name) || null;
+
+    return {
+        userId: userRow?.id || profileRow?.user_id || null,
+        email: userRow?.email || null,
+        role: userRow?.role || null,
+        fullName,
+        avatarUrl: normalizeText(profileRow?.avatar_url) || null,
+        bio: normalizeText(profileRow?.bio) || null,
+        location: normalizeText(profileRow?.location) || null,
+        education: normalizeText(profileRow?.education) || null,
+        work: normalizeText(profileRow?.work) || null,
+        visibility,
+        updatedAt: profileRow?.updated_at || null,
+    };
+}
+
+function mapPublicProfile(userRow, profileRow) {
+    const visibility = mergeProfileVisibility(profileRow?.visibility);
+    const fullName = normalizeText(profileRow?.full_name) || normalizeText(userRow?.full_name) || normalizeText(userRow?.email) || 'Community member';
+
+    return {
+        userId: userRow?.id || profileRow?.user_id || null,
+        fullName,
+        avatarUrl: normalizeText(profileRow?.avatar_url) || null,
+        bio: visibility.bio ? (normalizeText(profileRow?.bio) || null) : null,
+        location: visibility.location ? (normalizeText(profileRow?.location) || null) : null,
+        education: visibility.education ? (normalizeText(profileRow?.education) || null) : null,
+        work: visibility.work ? (normalizeText(profileRow?.work) || null) : null,
+        updatedAt: profileRow?.updated_at || null,
+    };
+}
+
+function parseProfileUpdateInput(body = {}) {
+    const errors = [];
+
+    const fullNameInput = body.fullName ?? body.full_name;
+    const fullNameResult = normalizeNullableText(fullNameInput, { maxLength: 160, allowNull: false });
+    if (fullNameResult.error) {
+        errors.push(`fullName: ${fullNameResult.error}`);
+    }
+
+    const bioResult = normalizeNullableText(body.bio, { maxLength: 1200 });
+    if (bioResult.error) {
+        errors.push(`bio: ${bioResult.error}`);
+    }
+
+    const locationResult = normalizeNullableText(body.location, { maxLength: 220 });
+    if (locationResult.error) {
+        errors.push(`location: ${locationResult.error}`);
+    }
+
+    const educationResult = normalizeNullableText(body.education, { maxLength: 220 });
+    if (educationResult.error) {
+        errors.push(`education: ${educationResult.error}`);
+    }
+
+    const workResult = normalizeNullableText(body.work, { maxLength: 220 });
+    if (workResult.error) {
+        errors.push(`work: ${workResult.error}`);
+    }
+
+    const visibilityResult = parseProfileVisibility(body.visibility);
+    if (visibilityResult.error) {
+        errors.push(visibilityResult.error);
+    }
+
+    return {
+        errors,
+        values: {
+            fullName: fullNameResult.value,
+            bio: bioResult.value,
+            location: locationResult.value,
+            education: educationResult.value,
+            work: workResult.value,
+            visibility: visibilityResult.value,
+        },
+    };
+}
+
+function runAvatarUpload(req, res, next) {
+    avatarUpload.single('avatar')(req, res, (error) => {
+        if (!error) return next();
+
+        if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({
+                error: `Avatar file is too large. Max size is ${Math.round(AVATAR_UPLOAD_MAX_BYTES / (1024 * 1024))} MB.`,
+            });
+        }
+        return res.status(400).json({
+            error: error.message || 'Invalid avatar upload',
+        });
+    });
+}
+
+async function ensureAvatarBucketAvailable() {
+    const { error: getBucketError } = await supabase.storage
+        .from(CONFIG.avatarBucket)
+        .list('', { limit: 1, offset: 0 });
+
+    if (!getBucketError) return;
+
+    const message = String(getBucketError?.message || '').toLowerCase();
+    const isMissingBucket = message.includes('not found') || message.includes('does not exist');
+    if (!isMissingBucket) {
+        throw getBucketError;
+    }
+
+    const { error: createError } = await supabase.storage.createBucket(CONFIG.avatarBucket, {
+        public: true,
+    });
+    if (createError && !String(createError.message || '').toLowerCase().includes('already exists')) {
+        throw createError;
+    }
+}
+
+async function uploadAvatarAndResolveUrl(userId, file) {
+    await ensureAvatarBucketAvailable();
+
+    const sanitizedFileName = sanitizeFileName(file?.originalname || 'avatar');
+    const objectPath = `${userId}/${Date.now()}-${sanitizedFileName}`;
+    const { error: uploadError } = await supabase.storage
+        .from(CONFIG.avatarBucket)
+        .upload(objectPath, file.buffer, {
+            contentType: file.mimetype || 'application/octet-stream',
+            upsert: true,
+            cacheControl: '3600',
+        });
+
+    if (uploadError) {
+        throw uploadError;
+    }
+
+    const { data: publicData } = supabase.storage
+        .from(CONFIG.avatarBucket)
+        .getPublicUrl(objectPath);
+
+    const avatarUrl = normalizeText(publicData?.publicUrl);
+    if (!avatarUrl) {
+        const error = new Error('Avatar was uploaded but public URL could not be resolved.');
+        error.status = 500;
+        throw error;
+    }
+    return avatarUrl;
+}
+
+async function updateProfileAvatarUrl(userId, avatarUrl) {
+    const userRow = await getUserById(userId);
+    if (!userRow) {
+        const error = new Error('User not found');
+        error.status = 404;
+        throw error;
+    }
+
+    await ensureUserProfileRow(userId, userRow);
+
+    const { data, error } = await supabase
+        .from(CONFIG.tables.userProfiles)
+        .update({
+            avatar_url: avatarUrl || null,
+            updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId)
+        .select('*')
+        .single();
+
+    if (error) {
+        throw error;
+    }
+
+    return mapPrivateProfile(userRow, data);
+}
+
+async function updateUserProfileData(userId, profileValues = {}) {
+    const userRow = await getUserById(userId);
+    if (!userRow) {
+        const error = new Error('User not found');
+        error.status = 404;
+        throw error;
+    }
+
+    const existingProfile = await ensureUserProfileRow(userId, userRow);
+    const nextVisibility = mergeProfileVisibility(existingProfile.visibility, profileValues.visibility);
+    const nowIso = new Date().toISOString();
+
+    const profileUpdates = {};
+    if (profileValues.fullName !== undefined) profileUpdates.full_name = profileValues.fullName;
+    if (profileValues.bio !== undefined) profileUpdates.bio = profileValues.bio;
+    if (profileValues.location !== undefined) profileUpdates.location = profileValues.location;
+    if (profileValues.education !== undefined) profileUpdates.education = profileValues.education;
+    if (profileValues.work !== undefined) profileUpdates.work = profileValues.work;
+    if (profileValues.visibility !== undefined) profileUpdates.visibility = nextVisibility;
+
+    let updatedUser = userRow;
+    if (profileValues.fullName !== undefined) {
+        const { data: userData, error: userUpdateError } = await supabase
+            .from(CONFIG.tables.users)
+            .update({
+                full_name: profileValues.fullName,
+            })
+            .eq('id', userId)
+            .select('id, full_name, email, role, university_id, session')
+            .single();
+
+        if (userUpdateError) {
+            throw userUpdateError;
+        }
+        updatedUser = userData || userRow;
+    }
+
+    let updatedProfile = existingProfile;
+    if (Object.keys(profileUpdates).length > 0) {
+        const { data: profileData, error: profileUpdateError } = await supabase
+            .from(CONFIG.tables.userProfiles)
+            .update({
+                ...profileUpdates,
+                updated_at: nowIso,
+            })
+            .eq('user_id', userId)
+            .select('*')
+            .single();
+
+        if (profileUpdateError) {
+            throw profileUpdateError;
+        }
+        updatedProfile = profileData;
+    }
+
+    return mapPrivateProfile(updatedUser, updatedProfile);
 }
 
 function mapApplicant(userRow) {
@@ -234,6 +608,10 @@ app.get('/', (req, res) => {
         health: 'User service OK',
         supabaseConfigured: isSupabaseConfigured(),
         endpoints: [
+            'GET /me',
+            'PUT /me',
+            'POST /me/avatar',
+            'GET /:userId',
             'GET /alumni-verification/me',
             'POST /alumni-verification/apply',
             'GET /notifications/alumni-verifications',
@@ -250,6 +628,83 @@ app.get('/health', (req, res) => {
         status: 'ok',
         supabaseConfigured: isSupabaseConfigured(),
     });
+});
+
+app.get('/me', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const userRow = await getUserById(req.requestUser.id);
+        if (!userRow) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const profileRow = await ensureUserProfileRow(req.requestUser.id, userRow);
+        return res.json({
+            data: mapPrivateProfile(userRow, profileRow),
+        });
+    } catch (error) {
+        if (isMissingTableError(error) && String(error.message || '').includes(CONFIG.tables.userProfiles)) {
+            return profileSchemaError(res);
+        }
+        return res.status(error?.status || 500).json({ error: error?.message || formatSupabaseError(error) });
+    }
+});
+
+app.put('/me', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const payload = parseProfileUpdateInput(req.body || {});
+        if (payload.errors.length) {
+            return res.status(400).json({
+                error: 'Validation failed',
+                details: payload.errors,
+            });
+        }
+
+        const profile = await updateUserProfileData(req.requestUser.id, payload.values);
+        return res.json({
+            message: 'Profile updated.',
+            data: profile,
+        });
+    } catch (error) {
+        if (isMissingTableError(error) && String(error.message || '').includes(CONFIG.tables.userProfiles)) {
+            return profileSchemaError(res);
+        }
+        return res.status(error?.status || 500).json({ error: error?.message || formatSupabaseError(error) });
+    }
+});
+
+app.post('/me/avatar', ensureDb, ensureAuthenticated, runAvatarUpload, async (req, res) => {
+    try {
+        let avatarUrl = '';
+
+        if (req.file) {
+            const fileType = normalizeText(req.file.mimetype).toLowerCase();
+            if (!fileType.startsWith('image/')) {
+                return res.status(400).json({ error: 'avatar must be an image file' });
+            }
+            avatarUrl = await uploadAvatarAndResolveUrl(req.requestUser.id, req.file);
+        } else {
+            const avatarUrlInput = req.body?.avatarUrl ?? req.body?.avatar_url;
+            const parsed = parseAvatarUrlInput(avatarUrlInput);
+            if (parsed.error) {
+                return res.status(400).json({ error: parsed.error });
+            }
+            avatarUrl = parsed.value;
+            if (!avatarUrl) {
+                return res.status(400).json({ error: 'Provide an avatar file or avatarUrl.' });
+            }
+        }
+
+        const profile = await updateProfileAvatarUrl(req.requestUser.id, avatarUrl);
+        return res.json({
+            message: 'Avatar updated.',
+            data: profile,
+        });
+    } catch (error) {
+        if (isMissingTableError(error) && String(error.message || '').includes(CONFIG.tables.userProfiles)) {
+            return profileSchemaError(res);
+        }
+        return res.status(error?.status || 500).json({ error: error?.message || formatSupabaseError(error) });
+    }
 });
 
 app.get('/alumni-verification/me', ensureDb, ensureAuthenticated, async (req, res) => {
@@ -649,6 +1104,30 @@ app.patch('/notifications/alumni-verifications/:id', ensureDb, ensureAuthenticat
             return verificationSchemaError(res);
         }
         return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.get('/:userId', ensureDb, async (req, res) => {
+    try {
+        const userId = normalizeText(req.params.userId);
+        if (!userId) {
+            return res.status(400).json({ error: 'userId is required' });
+        }
+
+        const userRow = await getUserById(userId);
+        if (!userRow) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const profileRow = await getUserProfileRow(userId);
+        return res.json({
+            data: mapPublicProfile(userRow, profileRow),
+        });
+    } catch (error) {
+        if (isMissingTableError(error) && String(error.message || '').includes(CONFIG.tables.userProfiles)) {
+            return profileSchemaError(res);
+        }
+        return res.status(error?.status || 500).json({ error: error?.message || formatSupabaseError(error) });
     }
 });
 

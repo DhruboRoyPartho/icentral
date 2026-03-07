@@ -2,6 +2,7 @@ import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { getJobDetailsFromPost } from '../utils/jobPortalStorage';
+import { openUserProfile } from '../utils/profileNavigation';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -109,6 +110,7 @@ export default function JobPortalPage() {
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim().toLowerCase();
+  const currentUserId = String(user?.id || '').trim();
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isAlumni = normalizedRole === 'alumni';
   const isFacultyOrAdmin = normalizedRole === 'faculty' || normalizedRole === 'admin';
@@ -253,6 +255,14 @@ export default function JobPortalPage() {
   function openPostDetails(postId) {
     if (!postId) return;
     navigate(`/posts/${postId}`);
+  }
+
+  function navigateToProfile(event, targetUserId) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    openUserProfile(navigate, targetUserId, currentUserId);
   }
 
   function handleCardNavigation(event, postId) {
@@ -846,7 +856,17 @@ export default function JobPortalPage() {
                           {commentsByPostId[item.id].map((comment) => (
                             <li key={comment.id} className="post-comment-item">
                               <div className="post-comment-head">
-                                <strong>{comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}</strong>
+                                {comment.authorId ? (
+                                  <button
+                                    type="button"
+                                    className="author-inline-btn"
+                                    onClick={(event) => navigateToProfile(event, comment.authorId)}
+                                  >
+                                    {comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}
+                                  </button>
+                                ) : (
+                                  <strong>{comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}</strong>
+                                )}
                                 <small>{formatDate(comment.createdAt)}</small>
                               </div>
                               <p>{comment.content}</p>

@@ -19,6 +19,7 @@ const CONFIG = {
     tables: {
         posts: process.env.POSTS_TABLE || 'posts',
         users: process.env.USERS_TABLE || 'users',
+        userProfiles: process.env.USER_PROFILES_TABLE || 'user_profiles',
         tags: process.env.TAGS_TABLE || 'tags',
         postTags: process.env.POST_TAGS_TABLE || 'post_tags',
         postRefs: process.env.POST_REFS_TABLE || 'post_refs',
@@ -187,6 +188,80 @@ function parseSearchRequest(query = {}) {
         cursor: cursorResult.value || null,
         errors,
     };
+}
+
+function normalizeFeedSortOption(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === 'upvotes' ? 'upvotes' : 'new';
+}
+
+function encodeFeedCursor({ offset, authorId, sort }) {
+    return Buffer.from(JSON.stringify({
+        v: 1,
+        offset: Number(offset) || 0,
+        authorId: normalizeText(authorId),
+        sort: normalizeFeedSortOption(sort),
+    }), 'utf8').toString('base64url');
+}
+
+function decodeFeedCursor(value) {
+    if (!value) return { value: null };
+
+    let decodedText = '';
+    try {
+        decodedText = Buffer.from(String(value), 'base64url').toString('utf8');
+    } catch {
+        try {
+            decodedText = Buffer.from(String(value), 'base64').toString('utf8');
+        } catch {
+            return { error: 'cursor is invalid' };
+        }
+    }
+
+    try {
+        const parsed = JSON.parse(decodedText);
+        const offset = Number.parseInt(parsed?.offset, 10);
+        if (!Number.isFinite(offset) || offset < 0) {
+            return { error: 'cursor is invalid' };
+        }
+        return {
+            value: {
+                offset,
+                authorId: normalizeText(parsed?.authorId),
+                sort: normalizeFeedSortOption(parsed?.sort),
+            },
+        };
+    } catch {
+        return { error: 'cursor is invalid' };
+    }
+}
+
+function sortFeedItems(items = [], sort = 'new') {
+    const normalizedSort = normalizeFeedSortOption(sort);
+    const cloned = items.slice();
+
+    if (normalizedSort === 'upvotes') {
+        cloned.sort((a, b) => {
+            const upvotesA = Number.isFinite(Number(a?.upvoteCount)) ? Math.trunc(Number(a.upvoteCount)) : 0;
+            const upvotesB = Number.isFinite(Number(b?.upvoteCount)) ? Math.trunc(Number(b.upvoteCount)) : 0;
+            if (upvotesB !== upvotesA) return upvotesB - upvotesA;
+
+            const createdAtA = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const createdAtB = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+            if (createdAtB !== createdAtA) return createdAtB - createdAtA;
+
+            return String(b?.id || '').localeCompare(String(a?.id || ''));
+        });
+        return cloned;
+    }
+
+    cloned.sort((a, b) => {
+        const createdAtA = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const createdAtB = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (createdAtB !== createdAtA) return createdAtB - createdAtA;
+        return String(b?.id || '').localeCompare(String(a?.id || ''));
+    });
+    return cloned;
 }
 
 function pickDefined(fields) {
@@ -610,7 +685,7 @@ async function attachTags(posts) {
 async function getUsersByIds(userIds = []) {
     if (!userIds.length) return new Map();
 
-    const { data, error } = await supabase
+    const { data: userRows, error } = await supabase
         .from(CONFIG.tables.users)
         .select('id, full_name, email, role')
         .in('id', userIds);
@@ -620,13 +695,38 @@ async function getUsersByIds(userIds = []) {
         throw error;
     }
 
+    const userProfileById = new Map();
+    try {
+        const { data: profileRows, error: profileError } = await supabase
+            .from(CONFIG.tables.userProfiles)
+            .select('user_id, full_name, avatar_url')
+            .in('user_id', userIds);
+
+        if (profileError) {
+            if (!isMissingTableError(profileError)) {
+                throw profileError;
+            }
+        } else {
+            for (const row of profileRows || []) {
+                userProfileById.set(row.user_id, row);
+            }
+        }
+    } catch (profileFetchError) {
+        if (!isMissingTableError(profileFetchError)) {
+            throw profileFetchError;
+        }
+    }
+
     const userMap = new Map();
-    for (const row of data || []) {
+    for (const row of userRows || []) {
+        const profile = userProfileById.get(row.id);
+        const profileName = normalizeText(profile?.full_name);
         userMap.set(row.id, {
             id: row.id,
-            fullName: row.full_name || null,
+            fullName: profileName || row.full_name || null,
             email: row.email || null,
             role: row.role || null,
+            avatarUrl: normalizeText(profile?.avatar_url) || null,
         });
     }
     return userMap;
@@ -910,6 +1010,7 @@ function mapSearchResultItem(post = {}) {
             ? {
                 id: post.author.id || null,
                 fullName: post.author.fullName || null,
+                avatarUrl: post.author.avatarUrl || null,
             }
             : null,
         status: post.status || null,
@@ -1162,22 +1263,112 @@ app.get('/feed', ensureDb, async (req, res) => {
         const archiveResult = await archiveExpiredPosts().catch(() => ({ archivedCount: 0 }));
         const limit = parseIntInRange(req.query.limit, CONFIG.feedDefaultLimit, 1, CONFIG.feedMaxLimit);
         const offset = parseIntInRange(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+        const sort = normalizeFeedSortOption(req.query.sort);
+        const cursorResult = decodeFeedCursor(req.query.cursor);
+        if (cursorResult.error) {
+            return res.status(400).json({ error: cursorResult.error });
+        }
+        const cursor = cursorResult.value;
         const includeArchived = parseBool(req.query.includeArchived, false);
         const pinnedOnly = parseBool(req.query.pinnedOnly, false);
         const status = typeof req.query.status === 'string'
             ? req.query.status.trim().toLowerCase()
             : '';
         const type = req.query.type;
-        const authorId = req.query.authorId || req.query.author_id;
+        const authorId = normalizeText(req.query.authorId || req.query.author_id);
         const tag = req.query.tag;
         const search = sanitizeSearchTerm(req.query.search || '');
+        const effectiveOffset = cursor ? cursor.offset : offset;
+
+        if (cursor && !authorId) {
+            return res.status(400).json({
+                error: 'cursor can only be used together with authorId',
+            });
+        }
+        if (cursor && cursor.authorId && authorId && cursor.authorId !== authorId) {
+            return res.status(400).json({
+                error: 'cursor does not match requested authorId',
+            });
+        }
+        if (cursor && cursor.sort && cursor.sort !== sort) {
+            return res.status(400).json({
+                error: 'cursor does not match requested sort',
+            });
+        }
 
         const tagFilteredPostIds = await resolveTagFilterPostIds(tag);
         if (Array.isArray(tagFilteredPostIds) && !tagFilteredPostIds.length) {
             return res.json({
                 data: [],
-                pagination: { limit, offset, total: 0 },
-                meta: { archivedDuringRequest: archiveResult.archivedCount || 0 },
+                items: [],
+                pagination: { limit, offset: effectiveOffset, total: 0, nextCursor: null },
+                nextCursor: null,
+                meta: {
+                    archivedDuringRequest: archiveResult.archivedCount || 0,
+                    sort,
+                    authorId: authorId || null,
+                },
+            });
+        }
+
+        if (authorId) {
+            let authorQuery = supabase
+                .from(CONFIG.tables.posts)
+                .select('*')
+                .eq('author_id', authorId);
+
+            if (status && status !== 'all') {
+                authorQuery = authorQuery.eq('status', status);
+            } else if (!status && !includeArchived) {
+                authorQuery = authorQuery.eq('status', 'published');
+            } else if (status === 'all' && !includeArchived) {
+                authorQuery = authorQuery.neq('status', 'archived');
+            }
+
+            if (pinnedOnly) {
+                authorQuery = authorQuery.eq('pinned', true);
+            }
+
+            if (type) {
+                authorQuery = authorQuery.eq('type', type);
+            }
+
+            if (tagFilteredPostIds) {
+                authorQuery = authorQuery.in('id', tagFilteredPostIds);
+            }
+
+            if (search) {
+                authorQuery = authorQuery.or(`title.ilike.%${search}%,summary.ilike.%${search}%`);
+            }
+
+            const { data: authorRows, error: authorRowsError } = await authorQuery;
+            if (authorRowsError) {
+                throw authorRowsError;
+            }
+
+            const enrichedRows = await enrichPosts(authorRows || [], { requestUserId: requestUser?.id || null });
+            const sortedRows = sortFeedItems(enrichedRows, sort);
+            const paginatedRows = sortedRows.slice(effectiveOffset, effectiveOffset + limit);
+            const nextOffset = effectiveOffset + paginatedRows.length;
+            const nextCursor = nextOffset < sortedRows.length
+                ? encodeFeedCursor({ offset: nextOffset, authorId, sort })
+                : null;
+
+            return res.json({
+                data: paginatedRows,
+                items: paginatedRows,
+                pagination: {
+                    limit,
+                    offset: effectiveOffset,
+                    total: sortedRows.length,
+                    nextCursor,
+                },
+                nextCursor,
+                meta: {
+                    archivedDuringRequest: archiveResult.archivedCount || 0,
+                    sort,
+                    authorId,
+                },
             });
         }
 
@@ -1204,10 +1395,6 @@ app.get('/feed', ensureDb, async (req, res) => {
             query = query.eq('type', type);
         }
 
-        if (authorId) {
-            query = query.eq('author_id', authorId);
-        }
-
         if (tagFilteredPostIds) {
             query = query.in('id', tagFilteredPostIds);
         }
@@ -1229,7 +1416,9 @@ app.get('/feed', ensureDb, async (req, res) => {
                 limit,
                 offset,
                 total: count ?? data.length,
+                nextCursor: null,
             },
+            nextCursor: null,
             meta: {
                 archivedDuringRequest: archiveResult.archivedCount || 0,
             },
