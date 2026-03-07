@@ -15,6 +15,8 @@ import ChatPage from './pages/ChatPage';
 import SectionPlaceholderPage from './pages/SectionPlaceholderPage';
 import PostDetailsPage from './pages/PostDetailsPage';
 import SearchPage from './pages/SearchPage';
+import DashboardPage from './pages/DashboardPage';
+import ProfilePage from './pages/ProfilePage';
 
 function App() {
   return (
@@ -34,6 +36,8 @@ function App() {
           <Route path="/alumni-verification" element={<AlumniVerificationPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/chat" element={<ChatPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/profile/:userId" element={<ProfilePage />} />
           <Route
             path="/events"
             element={
@@ -81,7 +85,6 @@ function App() {
               />
             }
           />
-          <Route path="/dashboard" element={<Navigate to="/home" replace />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/home" replace />} />

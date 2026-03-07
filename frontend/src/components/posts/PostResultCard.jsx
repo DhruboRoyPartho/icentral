@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/useAuth';
 import { getPostAuthorDisplayName } from '../../utils/postAuthor';
+import { openUserProfile } from '../../utils/profileNavigation';
 
 function formatDate(value) {
   if (!value) return 'N/A';
@@ -34,6 +36,8 @@ function getPostImageUrl(post) {
 
 export default function PostResultCard({ post, index = 0 }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const currentUserId = String(user?.id || '').trim();
 
   function openPost() {
     if (!post?.id) return;
@@ -48,6 +52,14 @@ export default function PostResultCard({ post, index = 0 }) {
 
   const imageUrl = getPostImageUrl(post);
   const authorLabel = getPostAuthorDisplayName(post, 'Community member');
+  const authorId = post?.author?.id || post?.authorId || null;
+
+  function handleOpenAuthorProfile(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!authorId) return;
+    openUserProfile(navigate, authorId, currentUserId);
+  }
 
   return (
     <article
@@ -94,7 +106,13 @@ export default function PostResultCard({ post, index = 0 }) {
       <div className="post-utility-bar">
         <span className="pill">{post?.type || 'POST'}</span>
         {post?.expiresAt && <span className="pill">Expires {formatDate(post.expiresAt)}</span>}
-        <span className="pill" title={authorLabel}>{authorLabel}</span>
+        {authorId ? (
+          <button type="button" className="pill author-nav-pill" title={authorLabel} onClick={handleOpenAuthorProfile}>
+            {authorLabel}
+          </button>
+        ) : (
+          <span className="pill" title={authorLabel}>{authorLabel}</span>
+        )}
       </div>
     </article>
   );

@@ -28,6 +28,12 @@ app.get('/posts/search', buildServiceProxy(postServiceUrl, {
     },
 }));
 
+app.get('/posts', buildServiceProxy(postServiceUrl, {
+    pathRewrite: {
+        '^/posts$': '/feed',
+    },
+}));
+
 app.use('/users', buildServiceProxy(userServiceUrl));
 app.use('/posts', buildServiceProxy(postServiceUrl));
 app.use('/jobs', buildServiceProxy(jobServiceUrl));

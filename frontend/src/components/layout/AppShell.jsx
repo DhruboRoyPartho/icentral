@@ -192,18 +192,24 @@ export default function AppShell() {
   const [loadingRecentUnseenMessages, setLoadingRecentUnseenMessages] = useState(true);
   const [recentNotifications, setRecentNotifications] = useState([]);
   const [loadingRecentNotifications, setLoadingRecentNotifications] = useState(true);
+  const [avatarImageFailed, setAvatarImageFailed] = useState(false);
 
   const profileName = user?.full_name || user?.name || 'Guest User';
+  const profileAvatarUrl = typeof user?.avatar_url === 'string' ? user.avatar_url.trim() : '';
   const roleLabel = user?.role ? String(user.role) : 'guest';
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isAlumni = normalizedRole === 'alumni';
   const isChatRoute = location.pathname.startsWith('/chat');
+  const isPublicProfileRoute = location.pathname.startsWith('/profile/');
+  const isDashboardRoute = location.pathname.startsWith('/dashboard');
+  const isProfileStyleRoute = isPublicProfileRoute || isDashboardRoute;
   const initials = profileName
     .split(' ')
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() || '')
     .join('') || 'GU';
+  const showProfileImage = Boolean(profileAvatarUrl) && !avatarImageFailed;
 
   function handleLogout() {
     clearAuthSession();
@@ -237,6 +243,10 @@ export default function AppShell() {
     const value = new URLSearchParams(location.search).get('q') || '';
     setGlobalSearchInput(value);
   }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    setAvatarImageFailed(false);
+  }, [profileAvatarUrl]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -505,8 +515,20 @@ export default function AppShell() {
             </svg>
           </button>
 
-          <button type="button" className="profile-btn" aria-label="Profile">
-            <span className="avatar-badge" aria-hidden="true">{initials}</span>
+          <button type="button" className="profile-btn" aria-label="Profile" onClick={() => navigate('/dashboard')}>
+            <span className={`avatar-badge${showProfileImage ? ' has-image' : ''}`} aria-hidden="true">
+              {showProfileImage ? (
+                <img
+                  src={profileAvatarUrl}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  onError={() => setAvatarImageFailed(true)}
+                />
+              ) : (
+                <span className="avatar-fallback">{initials}</span>
+              )}
+            </span>
             <span className="profile-meta">
               <strong>{profileName}</strong>
               <small>{roleLabel}</small>
@@ -526,8 +548,8 @@ export default function AppShell() {
         </div>
       </header>
 
-      <div className={`social-layout${isChatRoute ? ' is-chat-route' : ''}`}>
-        {!isChatRoute ? (
+      <div className={`social-layout${isChatRoute ? ' is-chat-route' : ''}${isProfileStyleRoute ? ' is-profile-route' : ''}`}>
+        {!isChatRoute && !isProfileStyleRoute ? (
           <aside className="feed-sidebar feed-sidebar-left" aria-label="Feed sections">
             <section className="panel sidebar-panel">
               <div className="panel-header">
@@ -547,11 +569,11 @@ export default function AppShell() {
           </aside>
         ) : null}
 
-        <main className={`social-main-content${isChatRoute ? ' is-chat-layout' : ''}`}>
+        <main className={`social-main-content${isChatRoute ? ' is-chat-layout' : ''}${isProfileStyleRoute ? ' is-profile-layout' : ''}`}>
           <Outlet />
         </main>
 
-        {!isChatRoute ? (
+        {!isChatRoute && !isProfileStyleRoute ? (
           <aside className="feed-sidebar feed-sidebar-right" aria-label="Social sidebar">
             <section className="panel sidebar-panel compact-panel">
               <div className="panel-header">

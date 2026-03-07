@@ -2,6 +2,7 @@ import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { getPostAuthorDisplayName } from '../utils/postAuthor';
+import { openUserProfile } from '../utils/profileNavigation';
 import { getPostTypeIconKey, getPostTypeIconPaths } from '../utils/postTypeIcon';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
@@ -179,6 +180,7 @@ export default function HomeFeedPage() {
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
   const normalizedRole = String(user?.role || '').toLowerCase();
+  const currentUserId = String(user?.id || '').trim();
   const allowedComposerTypeOptions = useMemo(
     () => postTypeOptions.filter((option) => canRoleCreateType(normalizedRole, option.value)),
     [normalizedRole],
@@ -291,6 +293,14 @@ export default function HomeFeedPage() {
   function openPostDetails(postId) {
     if (!postId) return;
     navigate(`/posts/${postId}`);
+  }
+
+  function navigateToProfile(event, targetUserId) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    openUserProfile(navigate, targetUserId, currentUserId);
   }
 
   function handleCardNavigation(event, postId) {
@@ -986,6 +996,7 @@ export default function HomeFeedPage() {
             {feedItems.map((item, index) => {
               const postImageUrl = getPostImageUrl(item);
               const authorLabel = getPostAuthorDisplayName(item);
+              const authorId = item?.author?.id || item?.authorId || null;
 
               return (
                 <article
@@ -1039,7 +1050,18 @@ export default function HomeFeedPage() {
                   <div className="post-utility-bar">
                     <span className="pill">{item.type || 'UNKNOWN'}</span>
                     {item.expiresAt && <span className="pill">Expires {formatDate(item.expiresAt)}</span>}
-                    <span className="pill" title={authorLabel}>{authorLabel}</span>
+                    {authorId ? (
+                      <button
+                        type="button"
+                        className="pill author-nav-pill"
+                        title={authorLabel}
+                        onClick={(event) => navigateToProfile(event, authorId)}
+                      >
+                        {authorLabel}
+                      </button>
+                    ) : (
+                      <span className="pill" title={authorLabel}>{authorLabel}</span>
+                    )}
                   </div>
 
                   <div className="feed-card-actions social-actions reddit-action-row">
@@ -1133,7 +1155,17 @@ export default function HomeFeedPage() {
                           {commentsByPostId[item.id].map((comment) => (
                             <li key={comment.id} className="post-comment-item">
                               <div className="post-comment-head">
-                                <strong>{comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}</strong>
+                                {comment.authorId ? (
+                                  <button
+                                    type="button"
+                                    className="author-inline-btn"
+                                    onClick={(event) => navigateToProfile(event, comment.authorId)}
+                                  >
+                                    {comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}
+                                  </button>
+                                ) : (
+                                  <strong>{comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}</strong>
+                                )}
                                 <small>{formatDate(comment.createdAt)}</small>
                               </div>
                               <p>{comment.content}</p>

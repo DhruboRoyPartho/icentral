@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { getJobDetailsFromPost } from '../utils/jobPortalStorage';
+import { openUserProfile } from '../utils/profileNavigation';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 const COMMENT_PAGE_LIMIT = 200;
@@ -141,6 +142,7 @@ export default function PostDetailsPage() {
   const { postId } = useParams();
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
+  const currentUserId = String(user?.id || '').trim();
 
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
@@ -357,6 +359,15 @@ export default function PostDetailsPage() {
   const postSummary = post?.summary || (isJobPost ? jobDetails?.jobDescription : 'No summary provided.');
   const authorLabel = getPostAuthorLabel(post, user);
   const authorAvatar = String(authorLabel || 'U').trim().charAt(0).toUpperCase() || 'U';
+  const authorId = post?.author?.id || post?.authorId || null;
+
+  function navigateToProfile(event, targetUserId) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    openUserProfile(navigate, targetUserId, currentUserId);
+  }
 
   return (
     <div className="home-feed-page post-details-page">
@@ -370,7 +381,7 @@ export default function PostDetailsPage() {
       <section className="panel post-details-panel">
         <div className="post-details-top-row">
           <button className="post-back-btn" type="button" onClick={() => navigate(-1)}>
-            ← Back
+            {'<'} Back
           </button>
           <div className="post-thread-meta">
             <span className="pill">{post?.type || 'POST'}</span>
@@ -389,9 +400,22 @@ export default function PostDetailsPage() {
           <>
             <header className="post-detail-header">
               <div className="post-author-chip">
-                <span className="post-avatar">{authorAvatar}</span>
+                <button
+                  type="button"
+                  className="post-avatar post-avatar-button"
+                  onClick={(event) => navigateToProfile(event, authorId)}
+                  disabled={!authorId}
+                >
+                  {authorAvatar}
+                </button>
                 <div>
-                  <strong>{authorLabel}</strong>
+                  {authorId ? (
+                    <button type="button" className="author-inline-btn" onClick={(event) => navigateToProfile(event, authorId)}>
+                      {authorLabel}
+                    </button>
+                  ) : (
+                    <strong>{authorLabel}</strong>
+                  )}
                   <small>{formatDate(post?.createdAt)}</small>
                 </div>
               </div>
@@ -536,7 +560,17 @@ export default function PostDetailsPage() {
                     className={`post-detail-comment-item${index === 0 ? ' is-featured' : ''}`}
                   >
                     <div className="post-comment-head">
-                      <strong>{getCommentAuthorLabel(comment, user)}</strong>
+                      {comment.authorId ? (
+                        <button
+                          type="button"
+                          className="author-inline-btn"
+                          onClick={(event) => navigateToProfile(event, comment.authorId)}
+                        >
+                          {getCommentAuthorLabel(comment, user)}
+                        </button>
+                      ) : (
+                        <strong>{getCommentAuthorLabel(comment, user)}</strong>
+                      )}
                       <small>{formatDate(comment.createdAt)}</small>
                     </div>
                     <p>{comment.content || 'No comment text provided.'}</p>
