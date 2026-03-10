@@ -19,6 +19,7 @@ import DashboardPage from './pages/DashboardPage';
 import ProfilePage from './pages/ProfilePage';
 import CollabPage from './pages/CollabPage';
 import CollabDetailsPage from './pages/CollabDetailsPage';
+import EventsPage from './pages/EventsPage';
 
 function App() {
   return (
@@ -42,19 +43,7 @@ function App() {
           <Route path="/profile/:userId" element={<ProfilePage />} />
           <Route path="/collaborate" element={<CollabPage />} />
           <Route path="/collaborate/:collabId" element={<CollabDetailsPage />} />
-          <Route
-            path="/events"
-            element={
-              <SectionPlaceholderPage
-                title="Events"
-                subtitle="This section will display event posts and event recaps in a dedicated feed view."
-                notes={[
-                  { title: 'Planned behavior', body: 'Event-tag and EVENT/EVENT_RECAP posts with RSVP-focused cards later.' },
-                  { title: 'Collaboration link', body: 'Collaborate posts related to events will also surface here as requested.' },
-                ]}
-              />
-            }
-          />
+          <Route path="/events" element={<EventsPage />} />
           <Route
             path="/moderation"
             element={

@@ -21,6 +21,15 @@ const COLLAB_JOIN_REQUEST_STATUSES = new Set(['pending', 'accepted', 'rejected']
 const COLLAB_FALLBACK_CATEGORY = 'Other Academic Collaboration';
 const COLLAB_FALLBACK_DURATION = 'Not specified';
 const COLLAB_FALLBACK_SKILL = 'General collaboration';
+const EVENT_TYPES = new Set(['EVENT', 'EVENT_RECAP']);
+const EVENT_DEFAULT_TITLE = {
+    EVENT: 'Event update',
+    EVENT_RECAP: 'Event recap update',
+};
+const EVENT_DEFAULT_SUMMARY = {
+    EVENT: 'Event details will be updated soon.',
+    EVENT_RECAP: 'Event recap details will be updated soon.',
+};
 
 const CONFIG = {
     supabaseUrl: process.env.SUPABASE_URL,
@@ -447,6 +456,20 @@ function canCreateJobAsBypassRole(role) {
 
 function isCollabType(value) {
     return String(value || '').trim().toUpperCase() === 'COLLAB';
+}
+
+function isEventType(value) {
+    return EVENT_TYPES.has(String(value || '').trim().toUpperCase());
+}
+
+function getDefaultEventTitle(type) {
+    const normalizedType = String(type || '').trim().toUpperCase();
+    return EVENT_DEFAULT_TITLE[normalizedType] || EVENT_DEFAULT_TITLE.EVENT;
+}
+
+function getDefaultEventSummary(type) {
+    const normalizedType = String(type || '').trim().toUpperCase();
+    return EVENT_DEFAULT_SUMMARY[normalizedType] || EVENT_DEFAULT_SUMMARY.EVENT;
 }
 
 function resolveVerificationStatus(rows) {
@@ -1576,6 +1599,66 @@ function buildFallbackCollabDescription(postRow = {}) {
     if (title) return `Collaboration opportunity: ${title}`;
 
     return 'Collaboration opportunity posted from the home feed.';
+}
+
+function buildFallbackEventMetadata(postRow = {}, postType = 'EVENT') {
+    const normalizedType = String(postType || '').trim().toUpperCase();
+    const createdAtInput = postRow?.created_at || postRow?.createdAt || null;
+    const createdAtDate = createdAtInput ? new Date(createdAtInput) : null;
+    const fallbackTimestamp = createdAtDate && !Number.isNaN(createdAtDate.getTime())
+        ? createdAtDate.toISOString()
+        : new Date().toISOString();
+    const isRecap = normalizedType === 'EVENT_RECAP';
+
+    return {
+        startsAt: isRecap ? null : fallbackTimestamp,
+        endsAt: isRecap ? fallbackTimestamp : null,
+        venue: 'TBA',
+        rsvpUrl: null,
+    };
+}
+
+async function ensureDefaultEventRefForPost(postRow, refInput = null) {
+    const postId = normalizeText(postRow?.id);
+    if (!postId) {
+        throw new Error('post id is required to create fallback event details');
+    }
+
+    const normalizedType = String(postRow?.type || '').trim().toUpperCase();
+    if (!isEventType(normalizedType)) return;
+
+    const requestedRefService = normalizeText(refInput?.service).toLowerCase();
+    if (requestedRefService === 'event-details') {
+        return;
+    }
+
+    const { data: existingRows, error: existingError } = await supabase
+        .from(CONFIG.tables.postRefs)
+        .select('id')
+        .eq('post_id', postId)
+        .eq('service', 'event-details')
+        .limit(1);
+
+    if (existingError) {
+        throw existingError;
+    }
+
+    if (Array.isArray(existingRows) && existingRows.length > 0) {
+        return;
+    }
+
+    const { error: insertError } = await supabase
+        .from(CONFIG.tables.postRefs)
+        .insert({
+            post_id: postId,
+            service: 'event-details',
+            entity_id: `event-details-${postId}`,
+            metadata: buildFallbackEventMetadata(postRow, normalizedType),
+        });
+
+    if (insertError) {
+        throw insertError;
+    }
 }
 
 async function ensureDefaultCollabDataForPost(postRow) {
@@ -3258,6 +3341,7 @@ app.get('/posts/:id', ensureDb, async (req, res) => {
 app.post('/posts', ensureDb, async (req, res) => {
     let createdPostId = null;
     let createAsCollab = false;
+    let createAsEvent = false;
 
     try {
         const payload = buildPostPayload(req.body);
@@ -3267,6 +3351,17 @@ app.post('/posts', ensureDb, async (req, res) => {
 
         const normalizedType = String(payload.postFields.type || '').toUpperCase();
         createAsCollab = isCollabType(normalizedType);
+        createAsEvent = isEventType(normalizedType);
+
+        if (createAsEvent) {
+            if (!normalizeText(payload.postFields.title)) {
+                payload.postFields.title = getDefaultEventTitle(normalizedType);
+            }
+
+            if (!normalizeText(payload.postFields.summary)) {
+                payload.postFields.summary = getDefaultEventSummary(normalizedType);
+            }
+        }
 
         if (createAsCollab) {
             const requestUser = getRequestUser(req);
@@ -3344,6 +3439,10 @@ app.post('/posts', ensureDb, async (req, res) => {
 
         if (payload.refProvided) {
             await replacePostRef(createdPost.id, payload.ref);
+        }
+
+        if (createAsEvent) {
+            await ensureDefaultEventRefForPost(createdPost, payload.refProvided ? payload.ref : null);
         }
 
         if (createAsCollab) {
