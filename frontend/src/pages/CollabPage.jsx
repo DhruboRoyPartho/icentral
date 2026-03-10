@@ -123,6 +123,7 @@ export default function CollabPage() {
   const [formErrors, setFormErrors] = useState({});
   const [filters, setFilters] = useState(initialFilters);
   const [banner, setBanner] = useState({ type: 'idle', message: '' });
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   const loadPosts = useCallback(async (options = {}) => {
     const { withLoading = true } = options;
@@ -144,6 +145,22 @@ export default function CollabPage() {
   useEffect(() => {
     loadPosts();
   }, [loadPosts]);
+
+  useEffect(() => {
+    if (!isCreateModalOpen) return undefined;
+
+    function handleEscapeKey(event) {
+      if (event.key === 'Escape') {
+        if (submitting) return;
+        setIsCreateModalOpen(false);
+      }
+    }
+
+    window.addEventListener('keydown', handleEscapeKey);
+    return () => {
+      window.removeEventListener('keydown', handleEscapeKey);
+    };
+  }, [isCreateModalOpen, submitting]);
 
   const stats = useMemo(() => {
     const openPosts = posts.filter((post) => isOpen(post)).length;
@@ -279,6 +296,7 @@ export default function CollabPage() {
       setFormState(initialFormState);
       setFormErrors({});
       setBanner({ type: 'success', message: 'Collaboration post published.' });
+      setIsCreateModalOpen(false);
       await loadPosts({ withLoading: false });
     } catch (error) {
       setBanner({ type: 'error', message: `Could not create collaboration post: ${error.message}` });
@@ -321,13 +339,33 @@ export default function CollabPage() {
       </section>
 
       <section className="collab-top-grid">
-        <section className="panel composer-panel collab-composer-panel">
+        <section className="panel composer-panel collab-composer-panel collab-composer-compact">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Create</p>
               <h3>Post a Collaboration Opportunity</h3>
             </div>
             <span className="pill">Collaboration only</span>
+          </div>
+
+          <p className="collab-mini-summary">
+            Keep the page clean with a compact composer. Open the popup to publish full collaboration details.
+          </p>
+
+          <ul className="collab-mini-points">
+            <li>Research / thesis / project collaboration support</li>
+            <li>Skills, openings, timeline, and deadline fields available</li>
+            <li>Join requests and membership workflow preserved</li>
+          </ul>
+
+          <div className="feed-card-actions collab-create-actions">
+            <button
+              className="btn btn-primary-solid"
+              type="button"
+              onClick={() => setIsCreateModalOpen(true)}
+            >
+              Open Create Form
+            </button>
           </div>
 
           {!isAuthenticated && (
@@ -338,198 +376,245 @@ export default function CollabPage() {
               </p>
             </div>
           )}
-
-          <form className="stacked-form collab-create-form" onSubmit={handleCreatePost}>
-            <div className="job-form-block">
-              <div className="job-form-block-head">
-                <p className="eyebrow">Core Information</p>
-                <h4>Opportunity Basics</h4>
-              </div>
-
-              <label>
-                <span>Title <strong className="required-marker">*</strong></span>
-                <input
-                  type="text"
-                  placeholder="e.g. Research Assistant for NLP literature review"
-                  value={formState.title}
-                  onChange={(event) => updateFormField('title', event.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                  aria-invalid={Boolean(formErrors.title)}
-                />
-                {formErrors.title && <small className="field-error">{formErrors.title}</small>}
-              </label>
-
-              <div className="field-row two-col">
-                <label>
-                  <span>Category <strong className="required-marker">*</strong></span>
-                  <select
-                    value={formState.category}
-                    onChange={(event) => updateFormField('category', event.target.value)}
-                    disabled={!isAuthenticated || submitting}
-                    aria-invalid={Boolean(formErrors.category)}
-                  >
-                    {COLLAB_CATEGORIES.map((category) => (
-                      <option key={category} value={category}>{category}</option>
-                    ))}
-                  </select>
-                  {formErrors.category && <small className="field-error">{formErrors.category}</small>}
-                </label>
-
-                <label>
-                  <span>Mode <strong className="required-marker">*</strong></span>
-                  <select
-                    value={formState.mode}
-                    onChange={(event) => updateFormField('mode', event.target.value)}
-                    disabled={!isAuthenticated || submitting}
-                    aria-invalid={Boolean(formErrors.mode)}
-                  >
-                    {COLLAB_MODES.map((mode) => (
-                      <option key={mode} value={mode}>{mode}</option>
-                    ))}
-                  </select>
-                  {formErrors.mode && <small className="field-error">{formErrors.mode}</small>}
-                </label>
-              </div>
-
-              <label>
-                <span>Summary <strong className="required-marker">*</strong></span>
-                <textarea
-                  rows={2}
-                  placeholder="Briefly explain the goal and scope of this collaboration."
-                  value={formState.summary}
-                  onChange={(event) => updateFormField('summary', event.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                  aria-invalid={Boolean(formErrors.summary)}
-                />
-                {formErrors.summary && <small className="field-error">{formErrors.summary}</small>}
-              </label>
-
-              <label>
-                <span>Description <strong className="required-marker">*</strong></span>
-                <textarea
-                  rows={5}
-                  placeholder="Provide full context, expectations, deliverables, and collaboration workflow."
-                  value={formState.description}
-                  onChange={(event) => updateFormField('description', event.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                  aria-invalid={Boolean(formErrors.description)}
-                />
-                {formErrors.description && <small className="field-error">{formErrors.description}</small>}
-              </label>
-            </div>
-
-            <div className="job-form-block">
-              <div className="job-form-block-head">
-                <p className="eyebrow">Participation Details</p>
-                <h4>Skills and Commitment</h4>
-              </div>
-
-              <label>
-                <span>Required skills <strong className="required-marker">*</strong></span>
-                <input
-                  type="text"
-                  placeholder="Comma separated, e.g. Python, Research Writing, React"
-                  value={formState.requiredSkills}
-                  onChange={(event) => updateFormField('requiredSkills', event.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                  aria-invalid={Boolean(formErrors.requiredSkills)}
-                />
-                <small className="composer-tag-hint">Use comma-separated values for skill tags.</small>
-                {formErrors.requiredSkills && <small className="field-error">{formErrors.requiredSkills}</small>}
-              </label>
-
-              <div className="field-row two-col">
-                <label>
-                  <span>Time commitment (hours/week) <strong className="required-marker">*</strong></span>
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    placeholder="e.g. 6"
-                    value={formState.timeCommitmentHoursPerWeek}
-                    onChange={(event) => updateFormField('timeCommitmentHoursPerWeek', event.target.value)}
-                    disabled={!isAuthenticated || submitting}
-                    aria-invalid={Boolean(formErrors.timeCommitmentHoursPerWeek)}
-                  />
-                  {formErrors.timeCommitmentHoursPerWeek && (
-                    <small className="field-error">{formErrors.timeCommitmentHoursPerWeek}</small>
-                  )}
-                </label>
-
-                <label>
-                  <span>Open positions <strong className="required-marker">*</strong></span>
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    placeholder="e.g. 2"
-                    value={formState.openings}
-                    onChange={(event) => updateFormField('openings', event.target.value)}
-                    disabled={!isAuthenticated || submitting}
-                    aria-invalid={Boolean(formErrors.openings)}
-                  />
-                  {formErrors.openings && <small className="field-error">{formErrors.openings}</small>}
-                </label>
-              </div>
-
-              <label>
-                <span>Expected timeline <strong className="required-marker">*</strong></span>
-                <input
-                  type="text"
-                  placeholder="e.g. 10 weeks, Semester-long, 3 months"
-                  value={formState.duration}
-                  onChange={(event) => updateFormField('duration', event.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                  aria-invalid={Boolean(formErrors.duration)}
-                />
-                {formErrors.duration && <small className="field-error">{formErrors.duration}</small>}
-              </label>
-
-              <div className="field-row two-col">
-                <label>
-                  <span>Join deadline (optional)</span>
-                  <input
-                    type="date"
-                    value={formState.joinUntil}
-                    onChange={(event) => updateFormField('joinUntil', event.target.value)}
-                    disabled={!isAuthenticated || submitting}
-                    aria-invalid={Boolean(formErrors.joinUntil)}
-                  />
-                  {formErrors.joinUntil && <small className="field-error">{formErrors.joinUntil}</small>}
-                </label>
-
-                <label>
-                  <span>Preferred background (optional)</span>
-                  <input
-                    type="text"
-                    placeholder="e.g. 3rd/4th year ICE students"
-                    value={formState.preferredBackground}
-                    onChange={(event) => updateFormField('preferredBackground', event.target.value)}
-                    disabled={!isAuthenticated || submitting}
-                  />
-                </label>
-              </div>
-
-              <label>
-                <span>Additional tags (optional)</span>
-                <input
-                  type="text"
-                  placeholder="Comma separated, e.g. thesis, data-science, iot"
-                  value={formState.tags}
-                  onChange={(event) => updateFormField('tags', event.target.value)}
-                  disabled={!isAuthenticated || submitting}
-                />
-              </label>
-            </div>
-
-            <div className="feed-card-actions collab-create-actions">
-              <button className="btn btn-primary-solid" type="submit" disabled={!isAuthenticated || submitting}>
-                {submitting ? 'Publishing...' : 'Publish Collaboration Post'}
-              </button>
-            </div>
-          </form>
         </section>
       </section>
+
+      {isCreateModalOpen && (
+        <div
+          className="profile-edit-backdrop collab-create-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Create collaboration post"
+          onClick={() => {
+            if (submitting) return;
+            setIsCreateModalOpen(false);
+          }}
+        >
+          <section className="panel profile-edit-modal collab-create-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Create</p>
+                <h3>Post a Collaboration Opportunity</h3>
+              </div>
+              <button
+                type="button"
+                className="btn btn-soft"
+                onClick={() => setIsCreateModalOpen(false)}
+                disabled={submitting}
+              >
+                Close
+              </button>
+            </div>
+
+            {!isAuthenticated && (
+              <div className="inline-alert warn-alert">
+                <p>
+                  Guest mode is active. You can browse collaboration posts, but posting requires authentication.
+                  <Link to="/login"> Sign in</Link> or <Link to="/signup"> create an account</Link>.
+                </p>
+              </div>
+            )}
+
+            <form className="stacked-form collab-create-form" onSubmit={handleCreatePost}>
+              <div className="job-form-block">
+                <div className="job-form-block-head">
+                  <p className="eyebrow">Core Information</p>
+                  <h4>Opportunity Basics</h4>
+                </div>
+
+                <label>
+                  <span>Title <strong className="required-marker">*</strong></span>
+                  <input
+                    type="text"
+                    placeholder="e.g. Research Assistant for NLP literature review"
+                    value={formState.title}
+                    onChange={(event) => updateFormField('title', event.target.value)}
+                    disabled={!isAuthenticated || submitting}
+                    aria-invalid={Boolean(formErrors.title)}
+                  />
+                  {formErrors.title && <small className="field-error">{formErrors.title}</small>}
+                </label>
+
+                <div className="field-row two-col">
+                  <label>
+                    <span>Category <strong className="required-marker">*</strong></span>
+                    <select
+                      value={formState.category}
+                      onChange={(event) => updateFormField('category', event.target.value)}
+                      disabled={!isAuthenticated || submitting}
+                      aria-invalid={Boolean(formErrors.category)}
+                    >
+                      {COLLAB_CATEGORIES.map((category) => (
+                        <option key={category} value={category}>{category}</option>
+                      ))}
+                    </select>
+                    {formErrors.category && <small className="field-error">{formErrors.category}</small>}
+                  </label>
+
+                  <label>
+                    <span>Mode <strong className="required-marker">*</strong></span>
+                    <select
+                      value={formState.mode}
+                      onChange={(event) => updateFormField('mode', event.target.value)}
+                      disabled={!isAuthenticated || submitting}
+                      aria-invalid={Boolean(formErrors.mode)}
+                    >
+                      {COLLAB_MODES.map((mode) => (
+                        <option key={mode} value={mode}>{mode}</option>
+                      ))}
+                    </select>
+                    {formErrors.mode && <small className="field-error">{formErrors.mode}</small>}
+                  </label>
+                </div>
+
+                <label>
+                  <span>Summary <strong className="required-marker">*</strong></span>
+                  <textarea
+                    rows={2}
+                    placeholder="Briefly explain the goal and scope of this collaboration."
+                    value={formState.summary}
+                    onChange={(event) => updateFormField('summary', event.target.value)}
+                    disabled={!isAuthenticated || submitting}
+                    aria-invalid={Boolean(formErrors.summary)}
+                  />
+                  {formErrors.summary && <small className="field-error">{formErrors.summary}</small>}
+                </label>
+
+                <label>
+                  <span>Description <strong className="required-marker">*</strong></span>
+                  <textarea
+                    rows={5}
+                    placeholder="Provide full context, expectations, deliverables, and collaboration workflow."
+                    value={formState.description}
+                    onChange={(event) => updateFormField('description', event.target.value)}
+                    disabled={!isAuthenticated || submitting}
+                    aria-invalid={Boolean(formErrors.description)}
+                  />
+                  {formErrors.description && <small className="field-error">{formErrors.description}</small>}
+                </label>
+              </div>
+
+              <div className="job-form-block">
+                <div className="job-form-block-head">
+                  <p className="eyebrow">Participation Details</p>
+                  <h4>Skills and Commitment</h4>
+                </div>
+
+                <label>
+                  <span>Required skills <strong className="required-marker">*</strong></span>
+                  <input
+                    type="text"
+                    placeholder="Comma separated, e.g. Python, Research Writing, React"
+                    value={formState.requiredSkills}
+                    onChange={(event) => updateFormField('requiredSkills', event.target.value)}
+                    disabled={!isAuthenticated || submitting}
+                    aria-invalid={Boolean(formErrors.requiredSkills)}
+                  />
+                  <small className="composer-tag-hint">Use comma-separated values for skill tags.</small>
+                  {formErrors.requiredSkills && <small className="field-error">{formErrors.requiredSkills}</small>}
+                </label>
+
+                <div className="field-row two-col">
+                  <label>
+                    <span>Time commitment (hours/week) <strong className="required-marker">*</strong></span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="e.g. 6"
+                      value={formState.timeCommitmentHoursPerWeek}
+                      onChange={(event) => updateFormField('timeCommitmentHoursPerWeek', event.target.value)}
+                      disabled={!isAuthenticated || submitting}
+                      aria-invalid={Boolean(formErrors.timeCommitmentHoursPerWeek)}
+                    />
+                    {formErrors.timeCommitmentHoursPerWeek && (
+                      <small className="field-error">{formErrors.timeCommitmentHoursPerWeek}</small>
+                    )}
+                  </label>
+
+                  <label>
+                    <span>Open positions <strong className="required-marker">*</strong></span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="e.g. 2"
+                      value={formState.openings}
+                      onChange={(event) => updateFormField('openings', event.target.value)}
+                      disabled={!isAuthenticated || submitting}
+                      aria-invalid={Boolean(formErrors.openings)}
+                    />
+                    {formErrors.openings && <small className="field-error">{formErrors.openings}</small>}
+                  </label>
+                </div>
+
+                <label>
+                  <span>Expected timeline <strong className="required-marker">*</strong></span>
+                  <input
+                    type="text"
+                    placeholder="e.g. 10 weeks, Semester-long, 3 months"
+                    value={formState.duration}
+                    onChange={(event) => updateFormField('duration', event.target.value)}
+                    disabled={!isAuthenticated || submitting}
+                    aria-invalid={Boolean(formErrors.duration)}
+                  />
+                  {formErrors.duration && <small className="field-error">{formErrors.duration}</small>}
+                </label>
+
+                <div className="field-row two-col">
+                  <label>
+                    <span>Join deadline (optional)</span>
+                    <input
+                      type="date"
+                      value={formState.joinUntil}
+                      onChange={(event) => updateFormField('joinUntil', event.target.value)}
+                      disabled={!isAuthenticated || submitting}
+                      aria-invalid={Boolean(formErrors.joinUntil)}
+                    />
+                    {formErrors.joinUntil && <small className="field-error">{formErrors.joinUntil}</small>}
+                  </label>
+
+                  <label>
+                    <span>Preferred background (optional)</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. 3rd/4th year ICE students"
+                      value={formState.preferredBackground}
+                      onChange={(event) => updateFormField('preferredBackground', event.target.value)}
+                      disabled={!isAuthenticated || submitting}
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  <span>Additional tags (optional)</span>
+                  <input
+                    type="text"
+                    placeholder="Comma separated, e.g. thesis, data-science, iot"
+                    value={formState.tags}
+                    onChange={(event) => updateFormField('tags', event.target.value)}
+                    disabled={!isAuthenticated || submitting}
+                  />
+                </label>
+              </div>
+
+              <div className="feed-card-actions collab-create-actions">
+                <button
+                  className="btn btn-soft"
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  disabled={submitting}
+                >
+                  Cancel
+                </button>
+                <button className="btn btn-primary-solid" type="submit" disabled={!isAuthenticated || submitting}>
+                  {submitting ? 'Publishing...' : 'Publish Collaboration Post'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
 
       <section className="panel feed-panel collab-feed-panel">
         <div className="panel-header feed-header">
