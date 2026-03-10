@@ -156,6 +156,7 @@ export default function PostDetailsPage() {
 
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isJobPost = String(post?.type || '').toUpperCase() === 'JOB';
+  const isCollabPost = String(post?.type || '').toUpperCase() === 'COLLAB';
   const jobDetails = isJobPost ? getJobDetailsFromPost(post) : null;
   const isOwner = post?.authorId && user?.id && String(post.authorId) === String(user.id);
   const canViewApplications = isJobPost && isOwner && normalizedRole === 'alumni';
@@ -499,6 +500,15 @@ export default function PostDetailsPage() {
                 </svg>
                 <span>{sharingLink ? 'Sharing...' : 'Share'}</span>
               </button>
+
+              {isCollabPost && post?.id && (
+                <Link
+                  className="btn btn-soft"
+                  to={`/collaborate/${encodeURIComponent(String(post.id))}`}
+                >
+                  View Collab Details
+                </Link>
+              )}
 
               {isJobPost && !isOwner && (
                 isAuthenticated ? (
