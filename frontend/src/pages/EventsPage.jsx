@@ -4,10 +4,16 @@ import { useAuth } from '../context/useAuth';
 import { getPostAuthorDisplayName } from '../utils/postAuthor';
 import { openUserProfile } from '../utils/profileNavigation';
 import { apiRequest } from '../utils/profileApi';
+import EventMetadataBlock from '../components/posts/EventMetadataBlock';
+import VolunteerEnrollmentModal from '../components/posts/VolunteerEnrollmentModal';
+import {
+  buildVolunteerEnrollmentInitialValues,
+  isEventOver,
+  isVolunteerEligibleEvent,
+} from '../utils/eventPost';
 
 const EVENT_TYPES = ['EVENT', 'EVENT_RECAP'];
 const FEED_LIMIT = 60;
-const VOLUNTEER_MARKER = '[VOLUNTEER_ENROLLMENT]';
 const CARD_NAV_IGNORE_SELECTOR = 'a,button,input,textarea,select,label,[role="button"],.post-comments-panel,[data-prevent-card-nav="true"]';
 const compactCountFormatter = new Intl.NumberFormat('en', {
   notation: 'compact',
@@ -27,7 +33,11 @@ const initialComposerForm = {
   summary: '',
   startsAt: '',
   endsAt: '',
-  venue: '',
+  location: '',
+  rules: '',
+  contactInfo: '',
+  rsvpUrl: '',
+  organizerNotes: '',
 };
 
 function normalizeText(value) {
@@ -106,19 +116,6 @@ function sortPosts(posts, sort = 'new') {
   });
 }
 
-function isVolunteerEnrollmentComment(content) {
-  return normalizeText(content).toLowerCase().includes(VOLUNTEER_MARKER.toLowerCase());
-}
-
-function hasVolunteerEnrollment(comments, userId) {
-  const normalizedUserId = String(userId || '').trim();
-  if (!normalizedUserId || !Array.isArray(comments)) return false;
-  return comments.some((comment) => (
-    String(comment?.authorId || '') === normalizedUserId
-    && isVolunteerEnrollmentComment(comment?.content)
-  ));
-}
-
 function buildFeedParams({ type, filters, search }) {
   const params = new URLSearchParams();
   params.set('type', type);
@@ -161,6 +158,7 @@ export default function EventsPage() {
   const [actionBusyPostId, setActionBusyPostId] = useState(null);
   const [sharingPostId, setSharingPostId] = useState(null);
   const [enrollingPostId, setEnrollingPostId] = useState(null);
+  const [volunteerModalPost, setVolunteerModalPost] = useState(null);
   const [openCommentsPostId, setOpenCommentsPostId] = useState(null);
   const [commentsByPostId, setCommentsByPostId] = useState({});
   const [commentsLoadingPostId, setCommentsLoadingPostId] = useState(null);
@@ -434,49 +432,50 @@ export default function EventsPage() {
     }
   }
 
-  async function handleVolunteerEnrollment(post) {
+  function openVolunteerEnrollment(post) {
     if (!isAuthenticated) {
       setBanner({ type: 'error', message: 'Sign in to enroll as a volunteer.' });
       return;
     }
-    const postId = post?.id;
+    if (!post?.id) return;
+    if (!isVolunteerEligibleEvent(post)) {
+      setBanner({ type: 'error', message: 'Volunteer enrollment is only available for active EVENT posts.' });
+      return;
+    }
+    if (String(post.authorId || '') === currentUserId) {
+      setBanner({ type: 'error', message: 'Event creators cannot enroll themselves as volunteers.' });
+      return;
+    }
+    if (post.viewerHasVolunteerEnrollment) {
+      setBanner({ type: 'success', message: 'You have already enrolled as a volunteer for this event.' });
+      return;
+    }
+    if (isEventOver(post)) {
+      setBanner({ type: 'error', message: 'This event has already ended.' });
+      return;
+    }
+    setVolunteerModalPost(post);
+  }
+
+  async function submitVolunteerEnrollment(formValues) {
+    const postId = volunteerModalPost?.id;
     if (!postId) return;
 
     setEnrollingPostId(postId);
     try {
-      const commentsResult = await apiRequest(`/posts/posts/${postId}/comments?limit=100&offset=0`);
-      const comments = Array.isArray(commentsResult?.data) ? commentsResult.data : [];
-      setCommentsByPostId((prev) => ({ ...prev, [postId]: comments }));
-
-      if (hasVolunteerEnrollment(comments, currentUserId)) {
-        setOpenCommentsPostId(postId);
-        setBanner({ type: 'success', message: 'You are already enrolled as a volunteer for this event.' });
-        return;
-      }
-
-      const result = await apiRequest(`/posts/posts/${postId}/comments`, {
+      const result = await apiRequest(`/posts/posts/${postId}/volunteers`, {
         method: 'POST',
-        body: JSON.stringify({
-          content: `${VOLUNTEER_MARKER} I want to volunteer for this event.`,
-        }),
+        body: JSON.stringify(formValues),
       });
-      const createdComment = result?.data;
-      if (createdComment) {
-        setCommentsByPostId((prev) => ({
-          ...prev,
-          [postId]: [createdComment, ...(Array.isArray(prev[postId]) ? prev[postId] : [])],
-        }));
-      }
-
-      const backendCount = Number(result?.meta?.commentCount);
-      if (Number.isFinite(backendCount)) {
-        updatePostEngagement(postId, {
-          commentCount: Math.max(0, Math.trunc(backendCount)),
-          commentsCount: Math.max(0, Math.trunc(backendCount)),
-        });
-      }
-      setOpenCommentsPostId(postId);
-      setBanner({ type: 'success', message: 'Volunteer enrollment submitted.' });
+      const backendCount = Number(result?.meta?.volunteerCount);
+      updatePostEngagement(postId, {
+        volunteerCount: Number.isFinite(backendCount)
+          ? Math.max(0, Math.trunc(backendCount))
+          : Math.max(0, Math.trunc(Number(volunteerModalPost?.volunteerCount || 0))) + 1,
+        viewerHasVolunteerEnrollment: true,
+      });
+      setVolunteerModalPost(null);
+      setBanner({ type: 'success', message: 'Volunteer enrollment submitted. The event creator has been notified.' });
     } catch (error) {
       setBanner({ type: 'error', message: `Could not enroll as volunteer: ${error.message}` });
     } finally {
@@ -499,7 +498,11 @@ export default function EventsPage() {
 
     const title = normalizeText(composerForm.title);
     const summary = normalizeText(composerForm.summary);
-    const venue = normalizeText(composerForm.venue);
+    const location = normalizeText(composerForm.location);
+    const rules = normalizeText(composerForm.rules);
+    const contactInfo = normalizeText(composerForm.contactInfo);
+    const rsvpUrl = normalizeText(composerForm.rsvpUrl);
+    const organizerNotes = normalizeText(composerForm.organizerNotes);
     if (!title || !summary) {
       setBanner({ type: 'error', message: 'Title and summary are required.' });
       return;
@@ -545,7 +548,12 @@ export default function EventsPage() {
         metadata: {
           startsAt,
           endsAt,
-          venue: venue || null,
+          location: location || null,
+          venue: location || null,
+          rules: rules || null,
+          contactInfo: contactInfo || null,
+          rsvpUrl: rsvpUrl || null,
+          organizerNotes: organizerNotes || null,
         },
       },
       ...(maybeAuthorId ? { authorId: maybeAuthorId } : {}),
@@ -666,8 +674,8 @@ export default function EventsPage() {
                   </label>
 
                   <label>
-                    <span>Venue (optional)</span>
-                    <input type="text" value={composerForm.venue} onChange={(event) => updateComposerField('venue', event.target.value)} />
+                    <span>Location (optional)</span>
+                    <input type="text" value={composerForm.location} onChange={(event) => updateComposerField('location', event.target.value)} />
                   </label>
                 </div>
 
@@ -699,6 +707,34 @@ export default function EventsPage() {
                 </div>
               </div>
 
+              <div className="job-form-block">
+                <div className="job-form-block-head">
+                  <p className="eyebrow">Extras</p>
+                  <h4>Volunteer and Attendance Details</h4>
+                </div>
+
+                <div className="field-row two-col">
+                  <label>
+                    <span>Contact Info</span>
+                    <input type="text" value={composerForm.contactInfo} onChange={(event) => updateComposerField('contactInfo', event.target.value)} />
+                  </label>
+                  <label>
+                    <span>RSVP Link</span>
+                    <input type="url" value={composerForm.rsvpUrl} onChange={(event) => updateComposerField('rsvpUrl', event.target.value)} />
+                  </label>
+                </div>
+
+                <label>
+                  <span>Rules or Guidelines</span>
+                  <textarea rows={3} value={composerForm.rules} onChange={(event) => updateComposerField('rules', event.target.value)} />
+                </label>
+
+                <label>
+                  <span>Organizer Notes</span>
+                  <textarea rows={3} value={composerForm.organizerNotes} onChange={(event) => updateComposerField('organizerNotes', event.target.value)} />
+                </label>
+              </div>
+
               <div className="feed-card-actions collab-create-actions">
                 <button className="btn btn-soft" type="button" onClick={() => setIsCreateModalOpen(false)} disabled={submittingPost}>Cancel</button>
                 <button className="btn btn-primary-solid" type="submit" disabled={!isAuthenticated || submittingPost}>
@@ -708,6 +744,20 @@ export default function EventsPage() {
             </form>
           </section>
         </div>
+      )}
+
+      {volunteerModalPost && (
+        <VolunteerEnrollmentModal
+          open={Boolean(volunteerModalPost)}
+          post={volunteerModalPost}
+          submitting={Boolean(volunteerModalPost?.id) && enrollingPostId === volunteerModalPost?.id}
+          initialValues={buildVolunteerEnrollmentInitialValues(user)}
+          onClose={() => {
+            if (enrollingPostId) return;
+            setVolunteerModalPost(null);
+          }}
+          onSubmit={submitVolunteerEnrollment}
+        />
       )}
 
       <section className="panel feed-panel collab-feed-panel">
@@ -785,12 +835,17 @@ export default function EventsPage() {
             {feedItems.map((item, index) => {
               const authorLabel = getPostAuthorDisplayName(item, 'Community member');
               const authorId = item?.author?.id || item?.authorId || null;
-              const commentsForPost = commentsByPostId[item.id] || [];
-              const alreadyEnrolled = hasVolunteerEnrollment(commentsForPost, currentUserId);
+              const isOwner = String(item?.authorId || '') === currentUserId;
+              const canVolunteer = isVolunteerEligibleEvent(item) && !isOwner;
+              const alreadyEnrolled = Boolean(item?.viewerHasVolunteerEnrollment);
+              const eventEnded = isEventOver(item);
+              const volunteerCount = Number.isFinite(Number(item?.volunteerCount))
+                ? Math.max(0, Math.trunc(Number(item.volunteerCount)))
+                : 0;
 
               return (
                 <article
-                  className="feed-card social-post-card feed-card-linkable"
+                  className="feed-card social-post-card feed-card-linkable is-event-post"
                   key={item.id}
                   style={{ '--card-index': index }}
                   role="link"
@@ -819,9 +874,11 @@ export default function EventsPage() {
                   </div>
 
                   <p className="feed-summary">{item.summary || 'No summary provided.'}</p>
+                  <EventMetadataBlock post={item} variant="card" />
 
                   <div className="post-utility-bar">
                     <span className="pill">{item.type || 'UNKNOWN'}</span>
+                    {isVolunteerEligibleEvent(item) && <span className="pill">Volunteers {volunteerCount}</span>}
                     {authorId ? (
                       <button type="button" className="pill author-nav-pill" onClick={(event) => navigateToProfile(event, authorId)}>
                         {authorLabel}
@@ -854,9 +911,22 @@ export default function EventsPage() {
                       <span>{sharingPostId === item.id ? 'Sharing...' : 'Share'}</span>
                     </button>
 
-                    <button className="reddit-action-btn reddit-metric-btn" type="button" onClick={() => handleVolunteerEnrollment(item)} disabled={enrollingPostId === item.id || alreadyEnrolled || item.status === 'archived'}>
-                      {alreadyEnrolled ? 'Enrolled' : enrollingPostId === item.id ? 'Enrolling...' : 'Enroll Volunteer'}
-                    </button>
+                    {canVolunteer && (
+                      <button
+                        className="reddit-action-btn reddit-metric-btn event-volunteer-btn"
+                        type="button"
+                        onClick={() => openVolunteerEnrollment(item)}
+                        disabled={enrollingPostId === item.id || alreadyEnrolled || item.status === 'archived' || eventEnded}
+                      >
+                        {alreadyEnrolled
+                          ? 'Already Enrolled'
+                          : eventEnded
+                            ? 'Event Ended'
+                            : enrollingPostId === item.id
+                              ? 'Submitting...'
+                              : 'Enroll as Volunteer'}
+                      </button>
+                    )}
                   </div>
 
                   {openCommentsPostId === item.id && (
@@ -878,7 +948,7 @@ export default function EventsPage() {
                                 <strong>{comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}</strong>
                                 <small>{formatDate(comment.createdAt)}</small>
                               </div>
-                              <p>{isVolunteerEnrollmentComment(comment.content) ? comment.content.replace(VOLUNTEER_MARKER, 'Volunteer enrollment:') : comment.content}</p>
+                              <p>{comment.content}</p>
                             </li>
                           ))}
                         </ul>

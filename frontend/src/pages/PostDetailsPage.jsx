@@ -3,6 +3,14 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { getJobDetailsFromPost } from '../utils/jobPortalStorage';
 import { openUserProfile } from '../utils/profileNavigation';
+import EventMetadataBlock from '../components/posts/EventMetadataBlock';
+import VolunteerEnrollmentModal from '../components/posts/VolunteerEnrollmentModal';
+import {
+  buildVolunteerEnrollmentInitialValues,
+  isEventOver,
+  isEventPostType,
+  isVolunteerEligibleEvent,
+} from '../utils/eventPost';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 const COMMENT_PAGE_LIMIT = 200;
@@ -153,10 +161,16 @@ export default function PostDetailsPage() {
   const [actionBusy, setActionBusy] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
   const [sharingLink, setSharingLink] = useState(false);
+  const [volunteerBusy, setVolunteerBusy] = useState(false);
+  const [volunteerModalOpen, setVolunteerModalOpen] = useState(false);
+  const [volunteers, setVolunteers] = useState([]);
+  const [loadingVolunteers, setLoadingVolunteers] = useState(false);
 
   const normalizedRole = String(user?.role || '').toLowerCase();
   const isJobPost = String(post?.type || '').toUpperCase() === 'JOB';
   const isCollabPost = String(post?.type || '').toUpperCase() === 'COLLAB';
+  const isEventPost = isEventPostType(post?.type);
+  const isVolunteerEvent = isVolunteerEligibleEvent(post);
   const jobDetails = isJobPost ? getJobDetailsFromPost(post) : null;
   const isOwner = post?.authorId && user?.id && String(post.authorId) === String(user.id);
   const canViewApplications = isJobPost && isOwner && normalizedRole === 'alumni';
@@ -235,6 +249,39 @@ export default function PostDetailsPage() {
       controller.abort();
     };
   }, [postId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let isMounted = true;
+
+    async function loadVolunteerRoster() {
+      if (!post?.id || !isVolunteerEvent || !isOwner) {
+        setVolunteers([]);
+        setLoadingVolunteers(false);
+        return;
+      }
+
+      setLoadingVolunteers(true);
+      try {
+        const result = await apiRequest(`/posts/posts/${post.id}/volunteers`, {
+          signal: controller.signal,
+        });
+        if (!isMounted) return;
+        setVolunteers(Array.isArray(result?.data) ? result.data : []);
+      } catch (error) {
+        if (!isMounted || error.name === 'AbortError') return;
+        setBanner({ type: 'error', message: `Could not load volunteer roster: ${error.message}` });
+      } finally {
+        if (isMounted) setLoadingVolunteers(false);
+      }
+    }
+
+    loadVolunteerRoster();
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, [isOwner, isVolunteerEvent, post?.id]);
 
   async function handleVote(direction) {
     if (!post || !post.id) return;
@@ -356,11 +403,64 @@ export default function PostDetailsPage() {
     }
   }
 
+  function openVolunteerEnrollment() {
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to enroll as a volunteer.' });
+      return;
+    }
+    if (!isVolunteerEvent) {
+      setBanner({ type: 'error', message: 'Volunteer enrollment is only available for EVENT posts.' });
+      return;
+    }
+    if (isOwner) {
+      setBanner({ type: 'error', message: 'Event creators cannot enroll themselves as volunteers.' });
+      return;
+    }
+    if (post?.viewerHasVolunteerEnrollment) {
+      setBanner({ type: 'success', message: 'You have already enrolled as a volunteer for this event.' });
+      return;
+    }
+    if (isEventOver(post)) {
+      setBanner({ type: 'error', message: 'This event has already ended.' });
+      return;
+    }
+    setVolunteerModalOpen(true);
+  }
+
+  async function submitVolunteerEnrollment(formValues) {
+    if (!post?.id) return;
+
+    setVolunteerBusy(true);
+    try {
+      const result = await apiRequest(`/posts/posts/${post.id}/volunteers`, {
+        method: 'POST',
+        body: JSON.stringify(formValues),
+      });
+      const backendCount = Number(result?.meta?.volunteerCount);
+      setPost((prev) => (prev ? {
+        ...prev,
+        volunteerCount: Number.isFinite(backendCount)
+          ? Math.max(0, Math.trunc(backendCount))
+          : Math.max(0, Math.trunc(Number(prev?.volunteerCount || 0))) + 1,
+        viewerHasVolunteerEnrollment: true,
+      } : prev));
+      setVolunteerModalOpen(false);
+      setBanner({ type: 'success', message: 'Volunteer enrollment submitted. The event creator has been notified.' });
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not enroll as volunteer: ${error.message}` });
+    } finally {
+      setVolunteerBusy(false);
+    }
+  }
+
   const postTitle = post?.title || `${toTitleCase(post?.type || 'post')} update`;
   const postSummary = post?.summary || (isJobPost ? jobDetails?.jobDescription : 'No summary provided.');
   const authorLabel = getPostAuthorLabel(post, user);
   const authorAvatar = String(authorLabel || 'U').trim().charAt(0).toUpperCase() || 'U';
   const authorId = post?.author?.id || post?.authorId || null;
+  const volunteerCount = Number.isFinite(Number(post?.volunteerCount))
+    ? Math.max(0, Math.trunc(Number(post.volunteerCount)))
+    : 0;
 
   function navigateToProfile(event, targetUserId) {
     if (event) {
@@ -379,13 +479,28 @@ export default function PostDetailsPage() {
         </section>
       )}
 
-      <section className="panel post-details-panel">
+      {volunteerModalOpen && (
+        <VolunteerEnrollmentModal
+          open={volunteerModalOpen}
+          post={post}
+          submitting={volunteerBusy}
+          initialValues={buildVolunteerEnrollmentInitialValues(user)}
+          onClose={() => {
+            if (volunteerBusy) return;
+            setVolunteerModalOpen(false);
+          }}
+          onSubmit={submitVolunteerEnrollment}
+        />
+      )}
+
+      <section className={`panel post-details-panel${isEventPost ? ' is-event-post' : ''}`}>
         <div className="post-details-top-row">
           <button className="post-back-btn" type="button" onClick={() => navigate(-1)}>
             {'<'} Back
           </button>
           <div className="post-thread-meta">
             <span className="pill">{post?.type || 'POST'}</span>
+            {isVolunteerEvent && <span className="pill">Volunteers {volunteerCount}</span>}
             <span>{post?.createdAt ? formatRelativeTime(post.createdAt) : 'Now'}</span>
           </div>
         </div>
@@ -426,6 +541,8 @@ export default function PostDetailsPage() {
             </header>
 
             <h2 className="post-details-title">{postTitle}</h2>
+
+            {isEventPost && <EventMetadataBlock post={post} variant="detail" />}
 
             {isJobPost && jobDetails && (
               <div className="post-detail-job-row">
@@ -488,18 +605,35 @@ export default function PostDetailsPage() {
                 <span className="sr-only">Comments</span>
               </button>
 
-              <button
-                className="reddit-action-btn reddit-metric-btn reddit-share-btn"
-                type="button"
-                disabled={sharingLink}
-                onClick={handleShare}
-              >
-                <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true">
-                  <path d="M12 5 16 9 12 13" />
-                  <path d="M16 9H8a4 4 0 0 0-4 4" />
-                </svg>
-                <span>{sharingLink ? 'Sharing...' : 'Share'}</span>
-              </button>
+                <button
+                  className="reddit-action-btn reddit-metric-btn reddit-share-btn"
+                  type="button"
+                  disabled={sharingLink}
+                  onClick={handleShare}
+                >
+                  <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M12 5 16 9 12 13" />
+                    <path d="M16 9H8a4 4 0 0 0-4 4" />
+                  </svg>
+                  <span>{sharingLink ? 'Sharing...' : 'Share'}</span>
+                </button>
+
+              {isVolunteerEvent && !isOwner && (
+                <button
+                  className="reddit-action-btn reddit-metric-btn event-volunteer-btn"
+                  type="button"
+                  disabled={volunteerBusy || post?.status === 'archived' || Boolean(post?.viewerHasVolunteerEnrollment) || isEventOver(post)}
+                  onClick={openVolunteerEnrollment}
+                >
+                  {post?.viewerHasVolunteerEnrollment
+                    ? 'Already Enrolled'
+                    : isEventOver(post)
+                      ? 'Event Ended'
+                      : volunteerBusy
+                        ? 'Submitting...'
+                        : 'Enroll as Volunteer'}
+                </button>
+              )}
 
               {isCollabPost && post?.id && (
                 <Link
@@ -557,6 +691,49 @@ export default function PostDetailsPage() {
                 Comment
               </button>
             </form>
+
+            {isVolunteerEvent && isOwner && (
+              <section className="event-roster-panel" aria-label="Volunteer roster">
+                <div className="post-comments-header">
+                  <h5>Volunteer Roster</h5>
+                </div>
+
+                {loadingVolunteers ? (
+                  <p className="post-comments-hint">Loading volunteer roster...</p>
+                ) : volunteers.length === 0 ? (
+                  <p className="post-comments-hint">No volunteers have enrolled yet.</p>
+                ) : (
+                  <div className="event-roster-table-shell">
+                    <div className="event-roster-table-wrap">
+                      <table className="event-roster-table">
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Contact</th>
+                            <th>Reason</th>
+                            <th>Availability</th>
+                            <th>Notes</th>
+                            <th>Submitted</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {volunteers.map((entry) => (
+                            <tr key={entry.id}>
+                              <td><div className="event-roster-cell">{entry.fullName}</div></td>
+                              <td><div className="event-roster-cell">{entry.contactInfo}</div></td>
+                              <td><div className="event-roster-cell">{entry.reason}</div></td>
+                              <td><div className="event-roster-cell">{entry.availability || 'Not provided'}</div></td>
+                              <td><div className="event-roster-cell">{entry.notes || 'Not provided'}</div></td>
+                              <td><div className="event-roster-cell is-compact">{formatDate(entry.createdAt)}</div></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
 
             {loadingComments ? (
               <p className="post-comments-hint">Loading comments...</p>

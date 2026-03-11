@@ -61,6 +61,25 @@ create table if not exists public.post_comments (
     constraint post_comments_content_check check (char_length(trim(content)) > 0)
 );
 
+create table if not exists public.event_volunteer_enrollments (
+    id uuid primary key default gen_random_uuid(),
+    post_id uuid not null references public.posts(id) on delete cascade,
+    user_id uuid not null references public.users(id) on delete cascade,
+    full_name text not null,
+    contact_info text not null,
+    reason text not null,
+    availability text,
+    notes text,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint event_volunteer_enrollments_full_name_check check (char_length(trim(full_name)) > 0),
+    constraint event_volunteer_enrollments_contact_info_check check (char_length(trim(contact_info)) > 0),
+    constraint event_volunteer_enrollments_reason_check check (char_length(trim(reason)) > 0),
+    constraint event_volunteer_enrollments_availability_check check (availability is null or char_length(trim(availability)) > 0),
+    constraint event_volunteer_enrollments_notes_check check (notes is null or char_length(trim(notes)) > 0),
+    unique (post_id, user_id)
+);
+
 create table if not exists public.collab_posts (
     post_id uuid primary key references public.posts(id) on delete cascade,
     category text not null,
@@ -150,6 +169,12 @@ create index if not exists idx_post_comments_post_created_at
 
 create index if not exists idx_post_comments_author_id
     on public.post_comments (author_id);
+
+create index if not exists idx_event_volunteer_enrollments_post_created_at
+    on public.event_volunteer_enrollments (post_id, created_at desc);
+
+create index if not exists idx_event_volunteer_enrollments_user_id
+    on public.event_volunteer_enrollments (user_id);
 
 create index if not exists idx_collab_posts_category
     on public.collab_posts (category);

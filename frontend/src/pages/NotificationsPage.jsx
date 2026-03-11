@@ -196,6 +196,25 @@ function mapCollabNotificationToCard(notification) {
   };
 }
 
+function mapEventNotificationToCard(notification) {
+  const postId = String(notification?.postId || '').trim();
+  const postTitle = notification?.postTitle || 'event post';
+  const volunteerName = notification?.actorName || 'A volunteer';
+
+  return {
+    id: String(notification.id),
+    kind: 'event',
+    theme: 'pending',
+    icon: 'EVT',
+    label: 'Event Volunteer',
+    title: 'New volunteer enrollment received',
+    message: `${volunteerName} enrolled to volunteer for "${postTitle}".`,
+    createdAt: notification.createdAt || null,
+    ctaLabel: postId ? 'Open Event Post' : 'Open Events',
+    ctaTo: postId ? `/posts/${encodeURIComponent(postId)}` : '/events',
+  };
+}
+
 export default function NotificationsPage() {
   const { isAuthenticated, role, user } = useAuth();
   const normalizedRole = String(role || '').toLowerCase();
@@ -282,6 +301,20 @@ export default function NotificationsPage() {
         } catch (error) {
           if (error.name !== 'AbortError') {
             errors.push(`Collaboration: ${error.message}`);
+          }
+        }
+      }
+
+      if (isAuthenticated) {
+        try {
+          const eventResult = await apiRequest('/posts/event-notifications?limit=30', {
+            signal: controller.signal,
+          });
+          const eventNotifications = Array.isArray(eventResult?.data) ? eventResult.data : [];
+          allCards.push(...eventNotifications.map(mapEventNotificationToCard));
+        } catch (error) {
+          if (error.name !== 'AbortError') {
+            errors.push(`Events: ${error.message}`);
           }
         }
       }

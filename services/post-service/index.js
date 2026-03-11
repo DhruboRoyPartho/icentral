@@ -15,6 +15,8 @@ const COLLAB_DEFAULT_LIMIT = 20;
 const COLLAB_MAX_LIMIT = 100;
 const COLLAB_NOTIFICATION_DEFAULT_LIMIT = 30;
 const COLLAB_NOTIFICATION_MAX_LIMIT = 100;
+const EVENT_NOTIFICATION_DEFAULT_LIMIT = 30;
+const EVENT_NOTIFICATION_MAX_LIMIT = 100;
 const COLLAB_MODES = new Set(['remote', 'onsite', 'hybrid']);
 const COLLAB_STATUSES = new Set(['open', 'closed']);
 const COLLAB_JOIN_REQUEST_STATUSES = new Set(['pending', 'accepted', 'rejected']);
@@ -44,6 +46,7 @@ const CONFIG = {
         postRefs: process.env.POST_REFS_TABLE || 'post_refs',
         postVotes: process.env.POST_VOTES_TABLE || 'post_votes',
         postComments: process.env.POST_COMMENTS_TABLE || 'post_comments',
+        eventVolunteerEnrollments: process.env.EVENT_VOLUNTEER_ENROLLMENTS_TABLE || 'event_volunteer_enrollments',
         collabPosts: process.env.COLLAB_POSTS_TABLE || 'collab_posts',
         collabSkills: process.env.COLLAB_SKILLS_TABLE || 'collab_skills',
         collabJoinRequests: process.env.COLLAB_JOIN_REQUESTS_TABLE || 'collab_join_requests',
@@ -362,6 +365,50 @@ function parseCommentInput(body = {}) {
     return { content, errors };
 }
 
+function parseVolunteerEnrollmentInput(body = {}) {
+    const fullName = normalizeText(body.fullName ?? body.full_name ?? body.name);
+    const contactInfo = normalizeText(body.contactInfo ?? body.contact_info ?? body.contact);
+    const reason = normalizeText(body.reason ?? body.motivation);
+    const availability = normalizeText(body.availability ?? body.availableTimes ?? body.available_times) || null;
+    const notes = normalizeText(body.notes ?? body.additionalNotes ?? body.additional_notes) || null;
+    const errors = [];
+
+    if (!fullName) {
+        errors.push('fullName is required');
+    } else if (fullName.length > 160) {
+        errors.push('fullName is too long');
+    }
+
+    if (!contactInfo) {
+        errors.push('contactInfo is required');
+    } else if (contactInfo.length > 240) {
+        errors.push('contactInfo is too long');
+    }
+
+    if (!reason) {
+        errors.push('reason is required');
+    } else if (reason.length > 2000) {
+        errors.push('reason is too long');
+    }
+
+    if (availability && availability.length > 500) {
+        errors.push('availability is too long');
+    }
+
+    if (notes && notes.length > 2000) {
+        errors.push('notes is too long');
+    }
+
+    return {
+        fullName,
+        contactInfo,
+        reason,
+        availability,
+        notes,
+        errors,
+    };
+}
+
 function mapComment(row, author = null) {
     return {
         id: row.id,
@@ -371,6 +418,22 @@ function mapComment(row, author = null) {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         author,
+    };
+}
+
+function mapEventVolunteerEnrollment(row, user = null) {
+    return {
+        id: row.id,
+        postId: row.post_id,
+        userId: row.user_id,
+        fullName: row.full_name,
+        contactInfo: row.contact_info,
+        reason: row.reason,
+        availability: row.availability || null,
+        notes: row.notes || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        user,
     };
 }
 
@@ -880,6 +943,74 @@ async function getPostCommentById(postId, commentId) {
     return data || null;
 }
 
+async function getEventVolunteerSummaryByPostIds(postIds = [], requestUserId = null) {
+    if (!postIds.length) return new Map();
+
+    const { data, error } = await supabase
+        .from(CONFIG.tables.eventVolunteerEnrollments)
+        .select('post_id, user_id')
+        .in('post_id', postIds);
+
+    if (error) {
+        if (isMissingTableError(error)) return new Map();
+        throw error;
+    }
+
+    const summaryByPostId = new Map();
+    for (const row of data || []) {
+        const existing = summaryByPostId.get(row.post_id) || {
+            volunteerCount: 0,
+            viewerHasVolunteerEnrollment: false,
+        };
+
+        existing.volunteerCount += 1;
+        if (requestUserId && String(row.user_id) === String(requestUserId)) {
+            existing.viewerHasVolunteerEnrollment = true;
+        }
+
+        summaryByPostId.set(row.post_id, existing);
+    }
+
+    return summaryByPostId;
+}
+
+async function getEventVolunteerEnrollmentByPostAndUser(postId, userId) {
+    const normalizedPostId = normalizeText(postId);
+    const normalizedUserId = normalizeText(userId);
+    if (!normalizedPostId || !normalizedUserId) return null;
+
+    const { data, error } = await supabase
+        .from(CONFIG.tables.eventVolunteerEnrollments)
+        .select('*')
+        .eq('post_id', normalizedPostId)
+        .eq('user_id', normalizedUserId)
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+
+    return data || null;
+}
+
+async function getEventVolunteerEnrollments(postId) {
+    const { data, error } = await supabase
+        .from(CONFIG.tables.eventVolunteerEnrollments)
+        .select('*')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        throw error;
+    }
+
+    const rows = data || [];
+    const userIds = [...new Set(rows.map((row) => row.user_id).filter(Boolean))];
+    const userMap = await getUsersByIds(userIds);
+
+    return rows.map((row) => mapEventVolunteerEnrollment(row, userMap.get(row.user_id) || null));
+}
+
 async function enrichPosts(postRows, { requestUserId = null } = {}) {
     const mapped = postRows.map(mapPost);
     if (!mapped.length) return [];
@@ -891,6 +1022,7 @@ async function enrichPosts(postRows, { requestUserId = null } = {}) {
     const authorMap = await getUsersByIds(authorIds);
     const voteSummaryByPostId = await getVoteSummaryByPostIds(postIds, requestUserId);
     const commentCountByPostId = await getCommentCountByPostIds(postIds);
+    const volunteerSummaryByPostId = await getEventVolunteerSummaryByPostIds(postIds, requestUserId);
 
     return withTags.map((post) => {
         const voteSummary = voteSummaryByPostId.get(post.id) || {
@@ -901,6 +1033,10 @@ async function enrichPosts(postRows, { requestUserId = null } = {}) {
             userVote: null,
         };
         const commentCount = commentCountByPostId.get(post.id) || 0;
+        const volunteerSummary = volunteerSummaryByPostId.get(post.id) || {
+            volunteerCount: 0,
+            viewerHasVolunteerEnrollment: false,
+        };
         const author = post.authorId ? (authorMap.get(post.authorId) || null) : null;
 
         return {
@@ -915,6 +1051,8 @@ async function enrichPosts(postRows, { requestUserId = null } = {}) {
             userVote: voteSummary.userVote,
             commentCount,
             commentsCount: commentCount,
+            volunteerCount: volunteerSummary.volunteerCount,
+            viewerHasVolunteerEnrollment: Boolean(volunteerSummary.viewerHasVolunteerEnrollment),
         };
     });
 }
@@ -1203,7 +1341,7 @@ async function searchPosts({ q, limit, cursor = null, requestUserId = null }) {
 async function getPostMetaById(postId) {
     const { data, error } = await supabase
         .from(CONFIG.tables.posts)
-        .select('id, status, author_id')
+        .select('id, type, title, status, author_id')
         .eq('id', postId)
         .maybeSingle();
 
@@ -2267,6 +2405,88 @@ async function getCollabNotificationsForUser(userId, { limit = COLLAB_NOTIFICATI
     return notifications.slice(0, safeLimit);
 }
 
+function buildEventVolunteerNotification({
+    enrollmentRow,
+    postRow,
+    volunteerUser = null,
+}) {
+    const createdAt = normalizeIsoTimestamp(enrollmentRow?.created_at || enrollmentRow?.updated_at);
+    const postId = normalizeText(enrollmentRow?.post_id);
+    const postTitle = normalizeText(postRow?.title) || 'Event post';
+    const submittedName = normalizeText(enrollmentRow?.full_name);
+    const fallbackUserName = normalizeText(volunteerUser?.fullName) || normalizeText(volunteerUser?.email);
+    const volunteerName = submittedName || fallbackUserName || 'A volunteer';
+    const idStamp = createdAt || 'unknown';
+
+    return {
+        id: `event-owner-volunteer-${enrollmentRow.id}-${idStamp}`,
+        source: 'api',
+        kind: 'event',
+        eventType: 'volunteer_enrollment_received',
+        postId,
+        postTitle,
+        enrollmentId: enrollmentRow.id,
+        createdAt,
+        actorUserId: normalizeText(enrollmentRow?.user_id) || null,
+        actorName: volunteerName,
+        message: normalizeText(enrollmentRow?.reason) || null,
+    };
+}
+
+async function getEventVolunteerNotificationsForUser(userId, { limit = EVENT_NOTIFICATION_DEFAULT_LIMIT } = {}) {
+    const normalizedUserId = normalizeText(userId);
+    if (!normalizedUserId) return [];
+
+    const safeLimit = parseIntInRange(limit, EVENT_NOTIFICATION_DEFAULT_LIMIT, 1, EVENT_NOTIFICATION_MAX_LIMIT);
+
+    const { data: ownerPostRows, error: ownerPostError } = await supabase
+        .from(CONFIG.tables.posts)
+        .select('id, title, author_id, type')
+        .eq('author_id', normalizedUserId)
+        .eq('type', 'EVENT');
+
+    if (ownerPostError) {
+        throw ownerPostError;
+    }
+
+    const ownerPostIds = (ownerPostRows || [])
+        .map((row) => normalizeText(row?.id))
+        .filter(Boolean);
+
+    if (!ownerPostIds.length) {
+        return [];
+    }
+
+    const postMap = new Map((ownerPostRows || []).map((row) => [String(row.id), row]));
+    const { data: enrollmentRows, error: enrollmentError } = await supabase
+        .from(CONFIG.tables.eventVolunteerEnrollments)
+        .select('id, post_id, user_id, full_name, contact_info, reason, availability, notes, created_at, updated_at')
+        .in('post_id', ownerPostIds)
+        .order('created_at', { ascending: false })
+        .limit(safeLimit);
+
+    if (enrollmentError) {
+        throw enrollmentError;
+    }
+
+    const volunteerIds = [...new Set((enrollmentRows || []).map((row) => normalizeText(row?.user_id)).filter(Boolean))];
+    const userMap = await getUsersByIds(volunteerIds);
+
+    return (enrollmentRows || [])
+        .map((row) => buildEventVolunteerNotification({
+            enrollmentRow: row,
+            postRow: postMap.get(String(row.post_id)) || null,
+            volunteerUser: userMap.get(String(row.user_id)) || null,
+        }))
+        .filter((item) => Boolean(item?.id))
+        .sort((a, b) => {
+            const diff = getTimestampForSort(b.createdAt) - getTimestampForSort(a.createdAt);
+            if (diff !== 0) return diff;
+            return String(b.id).localeCompare(String(a.id));
+        })
+        .slice(0, safeLimit);
+}
+
 app.get('/', (req, res) => {
     return res.json({
         health: 'Post service OK',
@@ -2285,11 +2505,14 @@ app.get('/', (req, res) => {
             'PATCH /join-requests/:id',
             'GET /collab-posts/:id/members',
             'GET /collab-notifications',
+            'GET /event-notifications',
             'GET /posts/:id',
             'POST /posts',
             'PATCH /posts/:id',
             'DELETE /posts/:id',
             'POST /posts/:id/vote',
+            'GET /posts/:id/volunteers',
+            'POST /posts/:id/volunteers',
             'GET /posts/:id/comments',
             'POST /posts/:id/comments',
             'PATCH /posts/:id/comments/:commentId',
@@ -3311,6 +3534,29 @@ app.get('/collab-notifications', ensureDb, ensureAuthenticated, async (req, res)
     }
 });
 
+app.get('/event-notifications', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const limit = parseIntInRange(
+            req.query.limit,
+            EVENT_NOTIFICATION_DEFAULT_LIMIT,
+            1,
+            EVENT_NOTIFICATION_MAX_LIMIT
+        );
+
+        const notifications = await getEventVolunteerNotificationsForUser(req.requestUser.id, { limit });
+        return res.json({
+            data: notifications,
+            meta: {
+                limit,
+                total: notifications.length,
+            },
+        });
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
 app.get('/posts/:id', ensureDb, async (req, res) => {
     try {
         const requestUser = getRequestUser(req);
@@ -3679,6 +3925,118 @@ app.post('/posts/:id/vote', ensureDb, ensureAuthenticated, async (req, res) => {
                 upvoteCount: post?.upvoteCount || 0,
                 downvoteCount: post?.downvoteCount || 0,
                 commentCount: post?.commentCount || 0,
+            },
+        });
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.get('/posts/:id/volunteers', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const postId = normalizeText(req.params.id);
+        if (!postId) {
+            return res.status(400).json({ error: 'post id is required' });
+        }
+
+        const postMeta = await getPostMetaById(postId);
+        if (!postMeta) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+
+        if (String(postMeta.type || '').toUpperCase() !== 'EVENT') {
+            return res.status(400).json({ error: 'Volunteer roster is only available for EVENT posts.' });
+        }
+
+        const isOwner = String(postMeta.author_id || '') === String(req.requestUser.id || '');
+        if (!isOwner) {
+            return res.status(403).json({ error: 'Only the original event poster can view volunteer enrollments.' });
+        }
+
+        const enrollments = await getEventVolunteerEnrollments(postId);
+        return res.json({
+            data: enrollments,
+            meta: {
+                postId,
+                total: enrollments.length,
+            },
+        });
+    } catch (error) {
+        if (isMissingTableError(error)) return socialSchemaError(res);
+        return res.status(500).json({ error: formatSupabaseError(error) });
+    }
+});
+
+app.post('/posts/:id/volunteers', ensureDb, ensureAuthenticated, async (req, res) => {
+    try {
+        const postId = normalizeText(req.params.id);
+        if (!postId) {
+            return res.status(400).json({ error: 'post id is required' });
+        }
+
+        const payload = parseVolunteerEnrollmentInput(req.body);
+        if (payload.errors.length) {
+            return res.status(400).json({ error: 'Validation failed', details: payload.errors });
+        }
+
+        const postMeta = await getPostMetaById(postId);
+        if (!postMeta) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+
+        if (String(postMeta.type || '').toUpperCase() !== 'EVENT') {
+            return res.status(400).json({ error: 'Volunteer enrollment is only available for EVENT posts.' });
+        }
+
+        if (String(postMeta.status || '').toLowerCase() === 'archived') {
+            return res.status(400).json({ error: 'Archived event posts cannot accept volunteers.' });
+        }
+
+        const isOwner = String(postMeta.author_id || '') === String(req.requestUser.id || '');
+        if (isOwner) {
+            return res.status(400).json({ error: 'Event creators cannot enroll themselves as volunteers.' });
+        }
+
+        const existingEnrollment = await getEventVolunteerEnrollmentByPostAndUser(postId, req.requestUser.id);
+        if (existingEnrollment) {
+            return res.status(409).json({ error: 'You have already enrolled as a volunteer for this event.' });
+        }
+
+        const nowIso = new Date().toISOString();
+        const { data: createdEnrollment, error: insertError } = await supabase
+            .from(CONFIG.tables.eventVolunteerEnrollments)
+            .insert({
+                post_id: postId,
+                user_id: req.requestUser.id,
+                full_name: payload.fullName,
+                contact_info: payload.contactInfo,
+                reason: payload.reason,
+                availability: payload.availability,
+                notes: payload.notes,
+                updated_at: nowIso,
+            })
+            .select('*')
+            .single();
+
+        if (insertError) {
+            if (insertError.code === '23505') {
+                return res.status(409).json({ error: 'You have already enrolled as a volunteer for this event.' });
+            }
+            if (isMissingTableError(insertError)) return socialSchemaError(res);
+            throw insertError;
+        }
+
+        const userMap = await getUsersByIds([req.requestUser.id]);
+        const post = await getPostById(postId, { requestUserId: req.requestUser.id });
+
+        return res.status(201).json({
+            message: 'Volunteer enrollment submitted',
+            data: mapEventVolunteerEnrollment(createdEnrollment, userMap.get(req.requestUser.id) || null),
+            meta: {
+                postId,
+                volunteerCount: post?.volunteerCount || 0,
+                viewerHasVolunteerEnrollment: Boolean(post?.viewerHasVolunteerEnrollment),
             },
         });
     } catch (error) {
