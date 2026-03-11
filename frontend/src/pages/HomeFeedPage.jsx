@@ -4,6 +4,14 @@ import { useAuth } from '../context/useAuth';
 import { getPostAuthorDisplayName } from '../utils/postAuthor';
 import { openUserProfile } from '../utils/profileNavigation';
 import { getPostTypeIconKey, getPostTypeIconPaths } from '../utils/postTypeIcon';
+import EventMetadataBlock from '../components/posts/EventMetadataBlock';
+import VolunteerEnrollmentModal from '../components/posts/VolunteerEnrollmentModal';
+import {
+  buildVolunteerEnrollmentInitialValues,
+  isEventOver,
+  isEventPostType,
+  isVolunteerEligibleEvent,
+} from '../utils/eventPost';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -176,6 +184,8 @@ export default function HomeFeedPage() {
   const [commentsLoadingPostId, setCommentsLoadingPostId] = useState(null);
   const [commentsSubmittingPostId, setCommentsSubmittingPostId] = useState(null);
   const [commentDrafts, setCommentDrafts] = useState({});
+  const [enrollingPostId, setEnrollingPostId] = useState(null);
+  const [volunteerModalPost, setVolunteerModalPost] = useState(null);
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
@@ -395,13 +405,18 @@ export default function HomeFeedPage() {
       return;
     }
 
-    if (!postForm.type || !postForm.summary.trim()) {
-      setBanner({ type: 'error', message: 'Type and summary are required to create a post.' });
+    if (!postForm.type) {
+      setBanner({ type: 'error', message: 'Type is required to create a post.' });
       return;
     }
 
     if (!canRoleCreateType(normalizedRole, postForm.type)) {
       setBanner({ type: 'error', message: getRoleTypeBlockMessage(normalizedRole, postForm.type) });
+      return;
+    }
+
+    if (!postForm.summary.trim()) {
+      setBanner({ type: 'error', message: 'Summary is required to create a post.' });
       return;
     }
 
@@ -658,6 +673,57 @@ export default function HomeFeedPage() {
     }
   }
 
+  function openVolunteerEnrollment(post) {
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to enroll as a volunteer.' });
+      return;
+    }
+    if (!post?.id || !isVolunteerEligibleEvent(post)) {
+      setBanner({ type: 'error', message: 'Volunteer enrollment is only available for EVENT posts.' });
+      return;
+    }
+    if (String(post.authorId || '') === currentUserId) {
+      setBanner({ type: 'error', message: 'Event creators cannot enroll themselves as volunteers.' });
+      return;
+    }
+    if (post.viewerHasVolunteerEnrollment) {
+      setBanner({ type: 'success', message: 'You have already enrolled as a volunteer for this event.' });
+      return;
+    }
+    if (isEventOver(post)) {
+      setBanner({ type: 'error', message: 'This event has already ended.' });
+      return;
+    }
+    setVolunteerModalPost(post);
+  }
+
+  async function submitVolunteerEnrollment(formValues) {
+    const postId = volunteerModalPost?.id;
+    if (!postId) return;
+
+    setEnrollingPostId(postId);
+    try {
+      const result = await apiRequest(`/posts/posts/${postId}/volunteers`, {
+        method: 'POST',
+        body: JSON.stringify(formValues),
+      });
+
+      const backendCount = Number(result?.meta?.volunteerCount);
+      updatePostEngagement(postId, {
+        volunteerCount: Number.isFinite(backendCount)
+          ? Math.max(0, Math.trunc(backendCount))
+          : Math.max(0, Math.trunc(Number(volunteerModalPost?.volunteerCount || 0))) + 1,
+        viewerHasVolunteerEnrollment: true,
+      });
+      setVolunteerModalPost(null);
+      setBanner({ type: 'success', message: 'Volunteer enrollment submitted. The event creator has been notified.' });
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not enroll as volunteer: ${error.message}` });
+    } finally {
+      setEnrollingPostId(null);
+    }
+  }
+
   const topPostItems = useMemo(() => (
     feedItems
       .filter((item) => String(item?.status || '').toLowerCase() !== 'archived')
@@ -774,7 +840,6 @@ export default function HomeFeedPage() {
                   ))}
                 </select>
               </label>
-
               <label className="composer-field field-status">
                 <span>Status</span>
                 <select value={postForm.status} onChange={(e) => updatePostField('status', e.target.value)} disabled={!isAuthenticated}>
@@ -915,6 +980,20 @@ export default function HomeFeedPage() {
         )}
       </section>
 
+      {volunteerModalPost && (
+        <VolunteerEnrollmentModal
+          open={Boolean(volunteerModalPost)}
+          post={volunteerModalPost}
+          submitting={Boolean(volunteerModalPost?.id) && enrollingPostId === volunteerModalPost?.id}
+          initialValues={buildVolunteerEnrollmentInitialValues(user)}
+          onClose={() => {
+            if (enrollingPostId) return;
+            setVolunteerModalPost(null);
+          }}
+          onSubmit={submitVolunteerEnrollment}
+        />
+      )}
+
       <section className="panel feed-panel">
         <div className="panel-header feed-header">
           <div>
@@ -946,7 +1025,7 @@ export default function HomeFeedPage() {
               <option value="EVENT">Event</option>
               <option value="EVENT_RECAP">Event Recap</option>
               <option value="ACHIEVEMENT">Achievement</option>
-              <option value="COLLAB">Collaboration</option>
+              <option value="collab">Collaboration</option>
             </select>
           </label>
           <label>
@@ -997,10 +1076,17 @@ export default function HomeFeedPage() {
               const postImageUrl = getPostImageUrl(item);
               const authorLabel = getPostAuthorDisplayName(item);
               const authorId = item?.author?.id || item?.authorId || null;
+              const isEventPost = isEventPostType(item?.type);
+              const canVolunteer = isVolunteerEligibleEvent(item) && String(item?.authorId || '') !== currentUserId;
+              const alreadyEnrolled = Boolean(item?.viewerHasVolunteerEnrollment);
+              const eventEnded = isEventOver(item);
+              const volunteerCount = Number.isFinite(Number(item?.volunteerCount))
+                ? Math.max(0, Math.trunc(Number(item.volunteerCount)))
+                : 0;
 
               return (
                 <article
-                  className="feed-card social-post-card feed-card-linkable"
+                  className={`feed-card social-post-card feed-card-linkable${isEventPost ? ' is-event-post' : ''}`}
                   key={item.id}
                   style={{ '--card-index': index }}
                   role="link"
@@ -1035,6 +1121,8 @@ export default function HomeFeedPage() {
 
                   <p className="feed-summary">{item.summary || 'No summary provided.'}</p>
 
+                  {isEventPost && <EventMetadataBlock post={item} variant="card" />}
+
                   {Array.isArray(item.tags) && item.tags.length > 0 && (
                     <ul className="mini-tag-row" aria-label="Post tags">
                       {item.tags.map((tag) => (
@@ -1050,6 +1138,7 @@ export default function HomeFeedPage() {
                   <div className="post-utility-bar">
                     <span className="pill">{item.type || 'UNKNOWN'}</span>
                     {item.expiresAt && <span className="pill">Expires {formatDate(item.expiresAt)}</span>}
+                    {isVolunteerEligibleEvent(item) && <span className="pill">Volunteers {volunteerCount}</span>}
                     {authorId ? (
                       <button
                         type="button"
@@ -1110,6 +1199,23 @@ export default function HomeFeedPage() {
                       <span className="reddit-action-count">{formatCompactCount(getCommentCount(item))}</span>
                       <span className="sr-only">Comments</span>
                     </button>
+
+                    {canVolunteer && (
+                      <button
+                        className="reddit-action-btn reddit-metric-btn event-volunteer-btn"
+                        type="button"
+                        onClick={() => openVolunteerEnrollment(item)}
+                        disabled={enrollingPostId === item.id || alreadyEnrolled || item.status === 'archived' || eventEnded}
+                      >
+                        {alreadyEnrolled
+                          ? 'Already Enrolled'
+                          : eventEnded
+                            ? 'Event Ended'
+                            : enrollingPostId === item.id
+                              ? 'Submitting...'
+                              : 'Enroll as Volunteer'}
+                      </button>
+                    )}
 
                     {(isModerator || isPostOwner(item)) && (
                       <button
