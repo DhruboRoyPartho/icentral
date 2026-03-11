@@ -1,11 +1,18 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import PostResultCard from '../components/posts/PostResultCard';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import { getPostAuthorDisplayName } from '../utils/postAuthor';
+import { openUserProfile } from '../utils/profileNavigation';
 import { apiRequest } from '../utils/profileApi';
 
-const EVENT_POST_TYPES = ['EVENT', 'EVENT_RECAP'];
-const FEED_PAGE_LIMIT = 60;
+const EVENT_TYPES = ['EVENT', 'EVENT_RECAP'];
+const FEED_LIMIT = 60;
+const VOLUNTEER_MARKER = '[VOLUNTEER_ENROLLMENT]';
+const CARD_NAV_IGNORE_SELECTOR = 'a,button,input,textarea,select,label,[role="button"],.post-comments-panel,[data-prevent-card-nav="true"]';
+const compactCountFormatter = new Intl.NumberFormat('en', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
 
 const initialFilters = {
   type: '',
@@ -21,12 +28,64 @@ const initialComposerForm = {
   startsAt: '',
   endsAt: '',
   venue: '',
-  rsvpUrl: '',
-  tagIds: [],
 };
 
 function normalizeText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function isEventType(value) {
+  return EVENT_TYPES.includes(String(value || '').toUpperCase());
+}
+
+function formatDate(value) {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function statusTone(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'published') return 'ok';
+  if (normalized === 'archived') return 'muted';
+  if (normalized === 'draft') return 'warn';
+  return 'neutral';
+}
+
+function getBaseVoteScore(post) {
+  const value = Number(
+    post?.score
+    ?? post?.voteScore
+    ?? post?.upvotes
+    ?? post?.upvoteCount
+    ?? post?.votes,
+  );
+  if (!Number.isFinite(value)) return 0;
+  return Math.trunc(value);
+}
+
+function getCommentCount(post) {
+  if (Array.isArray(post?.comments)) return post.comments.length;
+  const value = Number(
+    post?.commentCount
+    ?? post?.commentsCount
+    ?? post?.totalComments,
+  );
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.trunc(value));
+}
+
+function formatCompactCount(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return '0';
+  return compactCountFormatter.format(Math.trunc(numericValue));
 }
 
 function getCreatedAtTime(post) {
@@ -34,49 +93,36 @@ function getCreatedAtTime(post) {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
-function getUpvoteCount(post) {
-  const value = Number(post?.upvoteCount ?? post?.score ?? post?.voteScore ?? 0);
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.trunc(value));
-}
-
-function sortEventPosts(items, sort = 'new') {
+function sortPosts(posts, sort = 'new') {
   const normalizedSort = String(sort || '').toLowerCase() === 'upvotes' ? 'upvotes' : 'new';
-  const cloned = items.slice();
-
-  cloned.sort((a, b) => {
+  return posts.slice().sort((a, b) => {
     if (normalizedSort === 'upvotes') {
-      const upvoteDelta = getUpvoteCount(b) - getUpvoteCount(a);
-      if (upvoteDelta !== 0) return upvoteDelta;
+      const voteDelta = getBaseVoteScore(b) - getBaseVoteScore(a);
+      if (voteDelta !== 0) return voteDelta;
     }
-
-    const createdAtDelta = getCreatedAtTime(b) - getCreatedAtTime(a);
-    if (createdAtDelta !== 0) return createdAtDelta;
+    const timeDelta = getCreatedAtTime(b) - getCreatedAtTime(a);
+    if (timeDelta !== 0) return timeDelta;
     return String(b?.id || '').localeCompare(String(a?.id || ''));
   });
-
-  return cloned;
 }
 
-function getEventMetadata(post) {
-  const refs = Array.isArray(post?.refs) ? post.refs : [];
-  const eventRef = refs.find((ref) => normalizeText(ref?.service).toLowerCase() === 'event-details');
-  const metadata = eventRef?.metadata && typeof eventRef.metadata === 'object'
-    ? eventRef.metadata
-    : {};
+function isVolunteerEnrollmentComment(content) {
+  return normalizeText(content).toLowerCase().includes(VOLUNTEER_MARKER.toLowerCase());
+}
 
-  return {
-    startsAt: normalizeText(metadata.startsAt),
-    endsAt: normalizeText(metadata.endsAt),
-    venue: normalizeText(metadata.venue),
-    rsvpUrl: normalizeText(metadata.rsvpUrl),
-  };
+function hasVolunteerEnrollment(comments, userId) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId || !Array.isArray(comments)) return false;
+  return comments.some((comment) => (
+    String(comment?.authorId || '') === normalizedUserId
+    && isVolunteerEnrollmentComment(comment?.content)
+  ));
 }
 
 function buildFeedParams({ type, filters, search }) {
   const params = new URLSearchParams();
   params.set('type', type);
-  params.set('limit', String(FEED_PAGE_LIMIT));
+  params.set('limit', String(FEED_LIMIT));
   params.set('offset', '0');
   params.set('sort', filters.sort || 'new');
 
@@ -87,32 +133,20 @@ function buildFeedParams({ type, filters, search }) {
     params.set('status', 'all');
     params.set('includeArchived', 'true');
   }
-
   if (normalizedStatus === 'archived') {
     params.set('includeArchived', 'true');
   }
 
   if (filters.tag) params.set('tag', String(filters.tag));
   if (search) params.set('search', search);
-
   return params;
 }
 
-function isSupportedEventType(value) {
-  return EVENT_POST_TYPES.includes(String(value || '').toUpperCase());
-}
-
-function isHttpUrl(value) {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
 export default function EventsPage() {
+  const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
+  const currentUserId = String(user?.id || '').trim();
+
   const [feedItems, setFeedItems] = useState([]);
   const [tags, setTags] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
@@ -124,57 +158,24 @@ export default function EventsPage() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [composerForm, setComposerForm] = useState(initialComposerForm);
-  const [composerTagSearchInput, setComposerTagSearchInput] = useState('');
+  const [actionBusyPostId, setActionBusyPostId] = useState(null);
+  const [sharingPostId, setSharingPostId] = useState(null);
+  const [enrollingPostId, setEnrollingPostId] = useState(null);
+  const [openCommentsPostId, setOpenCommentsPostId] = useState(null);
+  const [commentsByPostId, setCommentsByPostId] = useState({});
+  const [commentsLoadingPostId, setCommentsLoadingPostId] = useState(null);
+  const [commentsSubmittingPostId, setCommentsSubmittingPostId] = useState(null);
+  const [commentDrafts, setCommentDrafts] = useState({});
 
   const deferredSearch = useDeferredValue(searchInput);
   const activeSearch = deferredSearch.trim();
 
-  const composerSelectedTagIds = Array.isArray(composerForm.tagIds)
-    ? composerForm.tagIds.map((value) => String(value)).filter(Boolean)
-    : [];
-  const composerSelectedTagSet = new Set(composerSelectedTagIds);
-  const selectedComposerTags = tags.filter((tag) => composerSelectedTagSet.has(String(tag.id)));
-  const normalizedComposerTagQuery = composerTagSearchInput.trim().toLowerCase();
-  const filteredComposerTagResults = tags
-    .filter((tag) => {
-      if (composerSelectedTagSet.has(String(tag.id))) return false;
-      if (!normalizedComposerTagQuery) return true;
-      const name = String(tag.name || '').toLowerCase();
-      const slug = String(tag.slug || '').toLowerCase();
-      return name.includes(normalizedComposerTagQuery) || slug.includes(normalizedComposerTagQuery);
-    })
-    .slice(0, 8);
-
   const eventStats = useMemo(() => {
-    const now = Date.now();
-    let upcomingCount = 0;
-    let recapCount = 0;
-    let scheduledCount = 0;
-
-    for (const post of feedItems) {
-      const type = String(post?.type || '').toUpperCase();
-      if (type === 'EVENT_RECAP') {
-        recapCount += 1;
-        continue;
-      }
-
-      if (type !== 'EVENT') continue;
-
-      scheduledCount += 1;
-      const startsAt = getEventMetadata(post).startsAt;
-      if (!startsAt) continue;
-      const startTime = Number(new Date(startsAt));
-      if (Number.isNaN(startTime)) continue;
-      if (startTime >= now) {
-        upcomingCount += 1;
-      }
-    }
-
+    const recapCount = feedItems.filter((item) => String(item?.type || '').toUpperCase() === 'EVENT_RECAP').length;
     return {
       total: feedItems.length,
-      scheduled: scheduledCount,
-      upcoming: upcomingCount,
       recaps: recapCount,
+      events: feedItems.length - recapCount,
     };
   }, [feedItems]);
 
@@ -204,41 +205,26 @@ export default function EventsPage() {
     const controller = new AbortController();
     let isMounted = true;
 
-    async function fetchEventPostsByType(type) {
-      const params = buildFeedParams({
-        type,
-        filters,
-        search: activeSearch,
-      });
-
-      const result = await apiRequest(`/posts/feed?${params.toString()}`, {
-        signal: controller.signal,
-      });
-
+    async function fetchByType(type) {
+      const params = buildFeedParams({ type, filters, search: activeSearch });
+      const result = await apiRequest(`/posts/feed?${params.toString()}`, { signal: controller.signal });
       return Array.isArray(result?.data)
         ? result.data.filter((item) => String(item?.type || '').toUpperCase() === type)
         : [];
     }
 
-    async function loadEventFeed() {
+    async function loadFeed() {
       setLoadingFeed(true);
       setFeedError('');
-
       try {
         const normalizedType = String(filters.type || '').toUpperCase();
-        const requestedTypes = isSupportedEventType(normalizedType)
-          ? [normalizedType]
-          : EVENT_POST_TYPES;
-
-        const results = await Promise.all(
-          requestedTypes.map((type) => fetchEventPostsByType(type))
-        );
-
+        const requestedTypes = isEventType(normalizedType) ? [normalizedType] : EVENT_TYPES;
+        const parts = await Promise.all(requestedTypes.map((type) => fetchByType(type)));
         if (!isMounted) return;
 
-        const seen = new Set();
         const merged = [];
-        for (const list of results) {
+        const seen = new Set();
+        for (const list of parts) {
           for (const item of list) {
             const id = String(item?.id || '').trim();
             if (!id || seen.has(id)) continue;
@@ -247,9 +233,8 @@ export default function EventsPage() {
           }
         }
 
-        const sorted = sortEventPosts(merged, filters.sort).slice(0, FEED_PAGE_LIMIT);
         startTransition(() => {
-          setFeedItems(sorted);
+          setFeedItems(sortPosts(merged, filters.sort).slice(0, FEED_LIMIT));
         });
       } catch (error) {
         if (!isMounted || error.name === 'AbortError') return;
@@ -260,7 +245,7 @@ export default function EventsPage() {
       }
     }
 
-    loadEventFeed();
+    loadFeed();
     return () => {
       isMounted = false;
       controller.abort();
@@ -269,17 +254,12 @@ export default function EventsPage() {
 
   useEffect(() => {
     if (!isCreateModalOpen) return undefined;
-
-    function handleEscapeKey(event) {
-      if (event.key !== 'Escape') return;
-      if (submittingPost) return;
+    function onEscape(event) {
+      if (event.key !== 'Escape' || submittingPost) return;
       setIsCreateModalOpen(false);
     }
-
-    window.addEventListener('keydown', handleEscapeKey);
-    return () => {
-      window.removeEventListener('keydown', handleEscapeKey);
-    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
   }, [isCreateModalOpen, submittingPost]);
 
   function refreshFeed() {
@@ -299,25 +279,220 @@ export default function EventsPage() {
     setComposerForm((prev) => ({ ...prev, [field]: value }));
   }
 
-  function addTagToComposer(tagId) {
-    updateComposerField('tagIds', [...new Set([...composerSelectedTagIds, String(tagId)])]);
-    setComposerTagSearchInput('');
+  function updatePostEngagement(postId, patch) {
+    setFeedItems((prev) => prev.map((item) => (item.id === postId ? { ...item, ...patch } : item)));
   }
 
-  function removeTagFromComposer(tagId) {
-    updateComposerField('tagIds', composerSelectedTagIds.filter((id) => id !== String(tagId)));
+  function shouldIgnoreCardNavigation(target) {
+    if (!(target instanceof Element)) return false;
+    return Boolean(target.closest(CARD_NAV_IGNORE_SELECTOR));
+  }
+
+  function openPostDetails(postId) {
+    if (!postId) return;
+    navigate(`/posts/${postId}`);
+  }
+
+  function navigateToProfile(event, targetUserId) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    openUserProfile(navigate, targetUserId, currentUserId);
+  }
+
+  async function loadComments(postId, options = {}) {
+    const { openAfterLoad = true } = options;
+    setCommentsLoadingPostId(postId);
+    try {
+      const result = await apiRequest(`/posts/posts/${postId}/comments?limit=100&offset=0`);
+      const comments = Array.isArray(result?.data) ? result.data : [];
+      const total = Number(result?.pagination?.total);
+      setCommentsByPostId((prev) => ({ ...prev, [postId]: comments }));
+      updatePostEngagement(postId, {
+        commentCount: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : comments.length,
+        commentsCount: Number.isFinite(total) ? Math.max(0, Math.trunc(total)) : comments.length,
+      });
+      if (openAfterLoad) setOpenCommentsPostId(postId);
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not load comments: ${error.message}` });
+    } finally {
+      setCommentsLoadingPostId(null);
+    }
+  }
+
+  async function toggleComments(post) {
+    if (openCommentsPostId === post.id) {
+      setOpenCommentsPostId(null);
+      return;
+    }
+    if (Array.isArray(commentsByPostId[post.id])) {
+      setOpenCommentsPostId(post.id);
+      return;
+    }
+    await loadComments(post.id, { openAfterLoad: true });
+  }
+
+  async function submitComment(postId) {
+    const content = (commentDrafts[postId] || '').trim();
+    if (!content) return;
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to comment on event posts.' });
+      return;
+    }
+
+    setCommentsSubmittingPostId(postId);
+    try {
+      const result = await apiRequest(`/posts/posts/${postId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      });
+      const createdComment = result?.data;
+      if (createdComment) {
+        setCommentsByPostId((prev) => ({
+          ...prev,
+          [postId]: [createdComment, ...(Array.isArray(prev[postId]) ? prev[postId] : [])],
+        }));
+      }
+      setCommentDrafts((prev) => ({ ...prev, [postId]: '' }));
+
+      const backendCount = Number(result?.meta?.commentCount);
+      if (Number.isFinite(backendCount)) {
+        updatePostEngagement(postId, {
+          commentCount: Math.max(0, Math.trunc(backendCount)),
+          commentsCount: Math.max(0, Math.trunc(backendCount)),
+        });
+      }
+    } catch (error) {
+      setBanner({ type: 'error', message: `Comment failed: ${error.message}` });
+    } finally {
+      setCommentsSubmittingPostId(null);
+    }
+  }
+
+  async function handleVote(post, direction) {
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to vote on event posts.' });
+      return;
+    }
+
+    const currentVote = post?.userVote === 'up' ? 'up' : post?.userVote === 'down' ? 'down' : null;
+    const nextVote = currentVote === direction ? 'none' : direction;
+    const beforeScore = getBaseVoteScore(post);
+    const beforeUpvoteCount = Number.isFinite(Number(post?.upvoteCount)) ? Math.max(0, Math.trunc(Number(post.upvoteCount))) : 0;
+    const beforeDownvoteCount = Number.isFinite(Number(post?.downvoteCount)) ? Math.max(0, Math.trunc(Number(post.downvoteCount))) : 0;
+
+    const currentNumeric = currentVote === 'up' ? 1 : currentVote === 'down' ? -1 : 0;
+    const nextNumeric = nextVote === 'up' ? 1 : nextVote === 'down' ? -1 : 0;
+    const delta = nextNumeric - currentNumeric;
+
+    updatePostEngagement(post.id, {
+      score: beforeScore + delta,
+      voteScore: beforeScore + delta,
+      upvoteCount: beforeUpvoteCount + (nextNumeric === 1 ? 1 : 0) - (currentNumeric === 1 ? 1 : 0),
+      downvoteCount: beforeDownvoteCount + (nextNumeric === -1 ? 1 : 0) - (currentNumeric === -1 ? 1 : 0),
+      userVote: nextNumeric === 1 ? 'up' : nextNumeric === -1 ? 'down' : null,
+    });
+
+    setActionBusyPostId(post.id);
+    try {
+      const result = await apiRequest(`/posts/posts/${post.id}/vote`, {
+        method: 'POST',
+        body: JSON.stringify({ vote: nextVote }),
+      });
+      const payload = result?.data || {};
+      updatePostEngagement(post.id, {
+        score: Number.isFinite(Number(payload.score)) ? Math.trunc(Number(payload.score)) : beforeScore,
+        voteScore: Number.isFinite(Number(payload.voteScore)) ? Math.trunc(Number(payload.voteScore)) : beforeScore,
+        upvoteCount: Number.isFinite(Number(payload.upvoteCount)) ? Math.max(0, Math.trunc(Number(payload.upvoteCount))) : beforeUpvoteCount,
+        downvoteCount: Number.isFinite(Number(payload.downvoteCount)) ? Math.max(0, Math.trunc(Number(payload.downvoteCount))) : beforeDownvoteCount,
+        userVote: payload.userVote === 'up' ? 'up' : payload.userVote === 'down' ? 'down' : null,
+      });
+    } catch (error) {
+      setBanner({ type: 'error', message: `Vote failed: ${error.message}` });
+    } finally {
+      setActionBusyPostId(null);
+    }
+  }
+
+  async function handleShare(postId) {
+    if (!postId) return;
+    setSharingPostId(postId);
+    try {
+      const link = typeof window !== 'undefined'
+        ? `${window.location.origin}/posts/${postId}`
+        : `/posts/${postId}`;
+      if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+        throw new Error('Clipboard access is unavailable in this browser.');
+      }
+      await navigator.clipboard.writeText(link);
+      setBanner({ type: 'success', message: 'Post link copied to clipboard.' });
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not share post: ${error.message}` });
+    } finally {
+      setSharingPostId(null);
+    }
+  }
+
+  async function handleVolunteerEnrollment(post) {
+    if (!isAuthenticated) {
+      setBanner({ type: 'error', message: 'Sign in to enroll as a volunteer.' });
+      return;
+    }
+    const postId = post?.id;
+    if (!postId) return;
+
+    setEnrollingPostId(postId);
+    try {
+      const commentsResult = await apiRequest(`/posts/posts/${postId}/comments?limit=100&offset=0`);
+      const comments = Array.isArray(commentsResult?.data) ? commentsResult.data : [];
+      setCommentsByPostId((prev) => ({ ...prev, [postId]: comments }));
+
+      if (hasVolunteerEnrollment(comments, currentUserId)) {
+        setOpenCommentsPostId(postId);
+        setBanner({ type: 'success', message: 'You are already enrolled as a volunteer for this event.' });
+        return;
+      }
+
+      const result = await apiRequest(`/posts/posts/${postId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({
+          content: `${VOLUNTEER_MARKER} I want to volunteer for this event.`,
+        }),
+      });
+      const createdComment = result?.data;
+      if (createdComment) {
+        setCommentsByPostId((prev) => ({
+          ...prev,
+          [postId]: [createdComment, ...(Array.isArray(prev[postId]) ? prev[postId] : [])],
+        }));
+      }
+
+      const backendCount = Number(result?.meta?.commentCount);
+      if (Number.isFinite(backendCount)) {
+        updatePostEngagement(postId, {
+          commentCount: Math.max(0, Math.trunc(backendCount)),
+          commentsCount: Math.max(0, Math.trunc(backendCount)),
+        });
+      }
+      setOpenCommentsPostId(postId);
+      setBanner({ type: 'success', message: 'Volunteer enrollment submitted.' });
+    } catch (error) {
+      setBanner({ type: 'error', message: `Could not enroll as volunteer: ${error.message}` });
+    } finally {
+      setEnrollingPostId(null);
+    }
   }
 
   async function handleCreatePost(event) {
     event.preventDefault();
-
     if (!isAuthenticated) {
       setBanner({ type: 'error', message: 'Sign in to create event posts.' });
       return;
     }
 
     const type = String(composerForm.type || '').toUpperCase();
-    if (!isSupportedEventType(type)) {
+    if (!isEventType(type)) {
       setBanner({ type: 'error', message: 'Choose EVENT or EVENT_RECAP.' });
       return;
     }
@@ -325,19 +500,12 @@ export default function EventsPage() {
     const title = normalizeText(composerForm.title);
     const summary = normalizeText(composerForm.summary);
     const venue = normalizeText(composerForm.venue);
-    const rsvpUrl = normalizeText(composerForm.rsvpUrl);
-
-    if (!title) {
-      setBanner({ type: 'error', message: 'Title is required.' });
-      return;
-    }
-    if (!summary) {
-      setBanner({ type: 'error', message: 'Summary is required.' });
+    if (!title || !summary) {
+      setBanner({ type: 'error', message: 'Title and summary are required.' });
       return;
     }
 
     let startsAt = null;
-    let startsAtTs = null;
     const startsAtInput = normalizeText(composerForm.startsAt);
     if (startsAtInput) {
       const parsed = new Date(startsAtInput);
@@ -346,11 +514,9 @@ export default function EventsPage() {
         return;
       }
       startsAt = parsed.toISOString();
-      startsAtTs = parsed.getTime();
     }
 
     let endsAt = null;
-    let endsAtTs = null;
     const endsAtInput = normalizeText(composerForm.endsAt);
     if (endsAtInput) {
       const parsed = new Date(endsAtInput);
@@ -359,17 +525,6 @@ export default function EventsPage() {
         return;
       }
       endsAt = parsed.toISOString();
-      endsAtTs = parsed.getTime();
-    }
-
-    if (startsAtTs !== null && endsAtTs !== null && endsAtTs < startsAtTs) {
-      setBanner({ type: 'error', message: 'End date/time must be after start date/time.' });
-      return;
-    }
-
-    if (rsvpUrl && !isHttpUrl(rsvpUrl)) {
-      setBanner({ type: 'error', message: 'RSVP URL must start with http:// or https://.' });
-      return;
     }
 
     const maybeAuthorId = user?.id && /^[0-9a-fA-F-]{32,36}$/.test(String(user.id))
@@ -384,7 +539,6 @@ export default function EventsPage() {
       title,
       summary,
       status: 'published',
-      tags: [...new Set(composerSelectedTagIds)],
       ref: {
         service: 'event-details',
         entityId: refEntityId,
@@ -392,7 +546,6 @@ export default function EventsPage() {
           startsAt,
           endsAt,
           venue: venue || null,
-          rsvpUrl: rsvpUrl || null,
         },
       },
       ...(maybeAuthorId ? { authorId: maybeAuthorId } : {}),
@@ -404,9 +557,7 @@ export default function EventsPage() {
         method: 'POST',
         body: JSON.stringify(payload),
       });
-
       setComposerForm(initialComposerForm);
-      setComposerTagSearchInput('');
       setBanner({ type: 'success', message: 'Event post published.' });
       setIsCreateModalOpen(false);
       refreshFeed();
@@ -431,7 +582,7 @@ export default function EventsPage() {
           <div>
             <p className="eyebrow">Events</p>
             <h2>Events and Event Recaps</h2>
-            <p>Track upcoming campus activities and publish recap posts in one feed.</p>
+            <p>Browse event posts with full interactions and volunteer enrollment.</p>
           </div>
           <div className="collab-overview-stats">
             <div className="collab-overview-stat-card">
@@ -439,8 +590,8 @@ export default function EventsPage() {
               <strong>{eventStats.total}</strong>
             </div>
             <div className="collab-overview-stat-card">
-              <span>Upcoming events</span>
-              <strong>{eventStats.upcoming}</strong>
+              <span>Events</span>
+              <strong>{eventStats.events}</strong>
             </div>
             <div className="collab-overview-stat-card">
               <span>Recaps</span>
@@ -459,23 +610,12 @@ export default function EventsPage() {
             </div>
             <span className="pill pill-ghost">POST /posts/posts</span>
           </div>
-
-          <p className="collab-mini-summary">
-            Open a compact modal form to create EVENT and EVENT_RECAP posts with event metadata.
-          </p>
-
-          <ul className="collab-mini-points">
-            <li>Supports title, summary, optional schedule, venue, and RSVP link</li>
-            <li>Stores metadata in post refs as service: event-details</li>
-            <li>Reuses existing post feed and details flow</li>
-          </ul>
-
+          <p className="collab-mini-summary">Open the popup for event creation fields.</p>
           <div className="feed-card-actions collab-create-actions">
             <button className="btn btn-primary-solid" type="button" onClick={() => setIsCreateModalOpen(true)}>
               Open Event Form
             </button>
           </div>
-
           {!isAuthenticated && (
             <div className="inline-alert warn-alert">
               <p>
@@ -504,24 +644,10 @@ export default function EventsPage() {
                 <p className="eyebrow">Create</p>
                 <h3>New Event Post</h3>
               </div>
-              <button
-                type="button"
-                className="btn btn-soft"
-                onClick={() => setIsCreateModalOpen(false)}
-                disabled={submittingPost}
-              >
+              <button type="button" className="btn btn-soft" onClick={() => setIsCreateModalOpen(false)} disabled={submittingPost}>
                 Close
               </button>
             </div>
-
-            {!isAuthenticated && (
-              <div className="inline-alert warn-alert">
-                <p>
-                  Guest mode is active. You can browse events, but publishing requires authentication.
-                  <Link to="/login"> Sign in</Link> or <Link to="/signup"> create an account</Link>.
-                </p>
-              </div>
-            )}
 
             <form className="stacked-form collab-create-form" onSubmit={handleCreatePost}>
               <div className="job-form-block">
@@ -533,11 +659,7 @@ export default function EventsPage() {
                 <div className="field-row two-col">
                   <label>
                     <span>Type <strong className="required-marker">*</strong></span>
-                    <select
-                      value={composerForm.type}
-                      onChange={(event) => updateComposerField('type', event.target.value)}
-                      disabled={!isAuthenticated || submittingPost}
-                    >
+                    <select value={composerForm.type} onChange={(event) => updateComposerField('type', event.target.value)}>
                       <option value="EVENT">EVENT</option>
                       <option value="EVENT_RECAP">EVENT_RECAP</option>
                     </select>
@@ -545,145 +667,40 @@ export default function EventsPage() {
 
                   <label>
                     <span>Venue (optional)</span>
-                    <input
-                      type="text"
-                      placeholder="e.g. ICE Seminar Room"
-                      value={composerForm.venue}
-                      onChange={(event) => updateComposerField('venue', event.target.value)}
-                      disabled={!isAuthenticated || submittingPost}
-                    />
+                    <input type="text" value={composerForm.venue} onChange={(event) => updateComposerField('venue', event.target.value)} />
                   </label>
                 </div>
 
                 <label>
                   <span>Title <strong className="required-marker">*</strong></span>
-                  <input
-                    type="text"
-                    placeholder="e.g. Alumni Networking Night 2026"
-                    value={composerForm.title}
-                    onChange={(event) => updateComposerField('title', event.target.value)}
-                    disabled={!isAuthenticated || submittingPost}
-                  />
+                  <input type="text" value={composerForm.title} onChange={(event) => updateComposerField('title', event.target.value)} />
                 </label>
 
                 <label>
                   <span>Summary <strong className="required-marker">*</strong></span>
-                  <textarea
-                    rows={4}
-                    placeholder="Brief event context, key highlights, agenda, or recap details."
-                    value={composerForm.summary}
-                    onChange={(event) => updateComposerField('summary', event.target.value)}
-                    disabled={!isAuthenticated || submittingPost}
-                  />
+                  <textarea rows={4} value={composerForm.summary} onChange={(event) => updateComposerField('summary', event.target.value)} />
                 </label>
               </div>
 
               <div className="job-form-block">
                 <div className="job-form-block-head">
-                  <p className="eyebrow">Event Metadata</p>
-                  <h4>Schedule, RSVP, and Tags</h4>
+                  <p className="eyebrow">Schedule</p>
+                  <h4>Date and Time</h4>
                 </div>
-
                 <div className="field-row two-col">
                   <label>
                     <span>Starts At (optional)</span>
-                    <input
-                      type="datetime-local"
-                      value={composerForm.startsAt}
-                      onChange={(event) => updateComposerField('startsAt', event.target.value)}
-                      disabled={!isAuthenticated || submittingPost}
-                    />
+                    <input type="datetime-local" value={composerForm.startsAt} onChange={(event) => updateComposerField('startsAt', event.target.value)} />
                   </label>
-
                   <label>
                     <span>Ends At (optional)</span>
-                    <input
-                      type="datetime-local"
-                      value={composerForm.endsAt}
-                      onChange={(event) => updateComposerField('endsAt', event.target.value)}
-                      disabled={!isAuthenticated || submittingPost}
-                    />
+                    <input type="datetime-local" value={composerForm.endsAt} onChange={(event) => updateComposerField('endsAt', event.target.value)} />
                   </label>
                 </div>
-
-                <label>
-                  <span>RSVP URL (optional)</span>
-                  <input
-                    type="url"
-                    placeholder="https://..."
-                    value={composerForm.rsvpUrl}
-                    onChange={(event) => updateComposerField('rsvpUrl', event.target.value)}
-                    disabled={!isAuthenticated || submittingPost}
-                  />
-                </label>
-
-                <label>
-                  <span>Tags</span>
-                  <div className="composer-tag-search-shell">
-                    <input
-                      className="composer-tag-search-input"
-                      type="search"
-                      placeholder={tags.length === 0 ? 'No tags available' : 'Search tags and press Enter'}
-                      value={composerTagSearchInput}
-                      onChange={(event) => setComposerTagSearchInput(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== 'Enter') return;
-                        if (!normalizedComposerTagQuery || filteredComposerTagResults.length === 0) return;
-                        event.preventDefault();
-                        addTagToComposer(filteredComposerTagResults[0].id);
-                      }}
-                      disabled={!isAuthenticated || submittingPost || tags.length === 0}
-                    />
-
-                    {isAuthenticated && normalizedComposerTagQuery && filteredComposerTagResults.length > 0 && (
-                      <ul className="composer-tag-results" role="listbox" aria-label="Matching tags">
-                        {filteredComposerTagResults.map((tag) => (
-                          <li key={tag.id}>
-                            <button type="button" onClick={() => addTagToComposer(tag.id)}>
-                              <span>{tag.name}</span>
-                              <small>{tag.slug}</small>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  {selectedComposerTags.length > 0 && (
-                    <div className="composer-selected-tags" aria-label="Selected tags">
-                      {selectedComposerTags.map((tag) => (
-                        <button
-                          type="button"
-                          className="composer-tag-chip"
-                          key={tag.id}
-                          onClick={() => removeTagFromComposer(tag.id)}
-                          aria-label={`Remove tag ${tag.name}`}
-                          title={`Remove ${tag.name}`}
-                        >
-                          <span>{tag.name}</span>
-                          <strong aria-hidden="true">x</strong>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <small className="composer-tag-hint">
-                    {tags.length === 0
-                      ? 'No tags available yet.'
-                      : `${composerSelectedTagIds.length} tag(s) selected.`}
-                  </small>
-                </label>
               </div>
 
               <div className="feed-card-actions collab-create-actions">
-                <button
-                  className="btn btn-soft"
-                  type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
-                  disabled={submittingPost}
-                >
-                  Cancel
-                </button>
+                <button className="btn btn-soft" type="button" onClick={() => setIsCreateModalOpen(false)} disabled={submittingPost}>Cancel</button>
                 <button className="btn btn-primary-solid" type="submit" disabled={!isAuthenticated || submittingPost}>
                   {submittingPost ? 'Publishing...' : 'Publish Event Post'}
                 </button>
@@ -708,14 +725,8 @@ export default function EventsPage() {
         <form className="feed-filters collab-feed-filters" onSubmit={(event) => event.preventDefault()}>
           <label>
             <span>Search</span>
-            <input
-              type="search"
-              placeholder="Search title or summary"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-            />
+            <input type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} />
           </label>
-
           <label>
             <span>Type</span>
             <select value={filters.type} onChange={(event) => updateFilter('type', event.target.value)}>
@@ -724,17 +735,13 @@ export default function EventsPage() {
               <option value="EVENT_RECAP">EVENT_RECAP</option>
             </select>
           </label>
-
           <label>
             <span>Tag</span>
             <select value={filters.tag} onChange={(event) => updateFilter('tag', event.target.value)}>
               <option value="">All tags</option>
-              {tags.map((tag) => (
-                <option key={tag.id} value={tag.id}>{tag.name}</option>
-              ))}
+              {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
             </select>
           </label>
-
           <label>
             <span>Status</span>
             <select value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}>
@@ -744,7 +751,6 @@ export default function EventsPage() {
               <option value="all">All statuses</option>
             </select>
           </label>
-
           <label>
             <span>Sort By</span>
             <select value={filters.sort} onChange={(event) => updateFilter('sort', event.target.value)}>
@@ -752,7 +758,6 @@ export default function EventsPage() {
               <option value="upvotes">Most upvoted</option>
             </select>
           </label>
-
           <div className="collab-filter-actions">
             <button className="btn btn-soft" type="button" onClick={clearFilters}>Reset</button>
           </div>
@@ -776,10 +781,127 @@ export default function EventsPage() {
             <p>Try adjusting filters or publish a new event from the composer above.</p>
           </div>
         ) : (
-          <div className="feed-grid search-results-grid">
-            {feedItems.map((item, index) => (
-              <PostResultCard key={item.id || `event-post-${index}`} post={item} index={index} />
-            ))}
+          <div className="feed-grid">
+            {feedItems.map((item, index) => {
+              const authorLabel = getPostAuthorDisplayName(item, 'Community member');
+              const authorId = item?.author?.id || item?.authorId || null;
+              const commentsForPost = commentsByPostId[item.id] || [];
+              const alreadyEnrolled = hasVolunteerEnrollment(commentsForPost, currentUserId);
+
+              return (
+                <article
+                  className="feed-card social-post-card feed-card-linkable"
+                  key={item.id}
+                  style={{ '--card-index': index }}
+                  role="link"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    if (!shouldIgnoreCardNavigation(event.target)) openPostDetails(item.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    if (shouldIgnoreCardNavigation(event.target)) return;
+                    event.preventDefault();
+                    openPostDetails(item.id);
+                  }}
+                >
+                  <div className="social-post-header">
+                    <div className="post-author-chip">
+                      <span className="post-avatar">{(item.type || 'P').slice(0, 1)}</span>
+                      <div>
+                        <strong>{item.title || `${item.type} update`}</strong>
+                        <small>{formatDate(item.createdAt)}</small>
+                      </div>
+                    </div>
+                    <div className="pill-row">
+                      <span className={`pill tone-${statusTone(item.status)}`}>{item.status || 'unknown'}</span>
+                    </div>
+                  </div>
+
+                  <p className="feed-summary">{item.summary || 'No summary provided.'}</p>
+
+                  <div className="post-utility-bar">
+                    <span className="pill">{item.type || 'UNKNOWN'}</span>
+                    {authorId ? (
+                      <button type="button" className="pill author-nav-pill" onClick={(event) => navigateToProfile(event, authorId)}>
+                        {authorLabel}
+                      </button>
+                    ) : (
+                      <span className="pill">{authorLabel}</span>
+                    )}
+                  </div>
+
+                  <div className="feed-card-actions social-actions reddit-action-row">
+                    <div className="reddit-vote-group" role="group" aria-label={`Voting controls for ${item.title || 'post'}`}>
+                      <button className={`reddit-action-btn vote-btn ${item.userVote === 'up' ? 'is-active' : ''}`} type="button" disabled={actionBusyPostId === item.id || item.status === 'archived'} onClick={() => handleVote(item, 'up')}>
+                        <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true"><polyline points="6 11 10 7 14 11" /><line x1="10" y1="7" x2="10" y2="14" /></svg>
+                        <span className="sr-only">Upvote</span>
+                      </button>
+                      <span className="reddit-vote-count">{formatCompactCount(getBaseVoteScore(item))}</span>
+                      <button className={`reddit-action-btn vote-btn ${item.userVote === 'down' ? 'is-active' : ''}`} type="button" disabled={actionBusyPostId === item.id || item.status === 'archived'} onClick={() => handleVote(item, 'down')}>
+                        <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true"><polyline points="6 9 10 13 14 9" /><line x1="10" y1="6" x2="10" y2="13" /></svg>
+                        <span className="sr-only">Downvote</span>
+                      </button>
+                    </div>
+
+                    <button className="reddit-action-btn reddit-metric-btn" type="button" onClick={() => toggleComments(item)}>
+                      <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 4.5h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3H4.5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2Z" /></svg>
+                      <span className="reddit-action-count">{formatCompactCount(getCommentCount(item))}</span>
+                    </button>
+
+                    <button className="reddit-action-btn reddit-metric-btn reddit-share-btn" type="button" onClick={() => handleShare(item.id)} disabled={sharingPostId === item.id}>
+                      <svg className="reddit-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M12 5 16 9 12 13" /><path d="M16 9H8a4 4 0 0 0-4 4" /></svg>
+                      <span>{sharingPostId === item.id ? 'Sharing...' : 'Share'}</span>
+                    </button>
+
+                    <button className="reddit-action-btn reddit-metric-btn" type="button" onClick={() => handleVolunteerEnrollment(item)} disabled={enrollingPostId === item.id || alreadyEnrolled || item.status === 'archived'}>
+                      {alreadyEnrolled ? 'Enrolled' : enrollingPostId === item.id ? 'Enrolling...' : 'Enroll Volunteer'}
+                    </button>
+                  </div>
+
+                  {openCommentsPostId === item.id && (
+                    <section className="post-comments-panel" aria-label="Comments section">
+                      <div className="post-comments-header">
+                        <h5>Comments</h5>
+                        <button className="btn btn-soft" type="button" onClick={() => loadComments(item.id, { openAfterLoad: false })}>
+                          {commentsLoadingPostId === item.id ? 'Refreshing...' : 'Refresh'}
+                        </button>
+                      </div>
+
+                      {commentsLoadingPostId === item.id ? (
+                        <p className="post-comments-hint">Loading comments...</p>
+                      ) : Array.isArray(commentsByPostId[item.id]) && commentsByPostId[item.id].length > 0 ? (
+                        <ul className="post-comments-list">
+                          {commentsByPostId[item.id].map((comment) => (
+                            <li key={comment.id} className="post-comment-item">
+                              <div className="post-comment-head">
+                                <strong>{comment.author?.fullName || comment.author?.email || `User ${String(comment.authorId || '').slice(0, 8)}`}</strong>
+                                <small>{formatDate(comment.createdAt)}</small>
+                              </div>
+                              <p>{isVolunteerEnrollmentComment(comment.content) ? comment.content.replace(VOLUNTEER_MARKER, 'Volunteer enrollment:') : comment.content}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="post-comments-hint">No comments yet. Start the discussion.</p>
+                      )}
+
+                      <form className="post-comment-form" onSubmit={(event) => {
+                        event.preventDefault();
+                        submitComment(item.id);
+                      }}>
+                        <textarea rows={2} placeholder={isAuthenticated ? 'Write a comment...' : 'Sign in to write a comment'} value={commentDrafts[item.id] || ''} onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))} disabled={commentsSubmittingPostId === item.id || !isAuthenticated} />
+                        <div className="post-comment-form-actions">
+                          <button className="btn btn-primary-solid" type="submit" disabled={commentsSubmittingPostId === item.id || !isAuthenticated || !(commentDrafts[item.id] || '').trim()}>
+                            {commentsSubmittingPostId === item.id ? 'Posting...' : 'Post Comment'}
+                          </button>
+                        </div>
+                      </form>
+                    </section>
+                  )}
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
