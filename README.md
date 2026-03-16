@@ -285,5 +285,5 @@ and leave SMTP variables blank unless you explicitly want email sending enabled.
 
 Package metadata in the repository credits:
 
+- Kazi Fardin Islam
 - Dhrubo Roy Partho
-- Sadnan
