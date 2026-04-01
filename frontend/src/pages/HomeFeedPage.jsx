@@ -18,7 +18,7 @@ import {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const initialPostForm = {
-  type: 'EVENT',
+  type: 'GENERAL',
   title: '',
   summary: '',
   status: 'published',
@@ -28,6 +28,7 @@ const initialPostForm = {
 };
 
 const postTypeOptions = [
+  { value: 'GENERAL', label: 'General' },
   { value: 'ANNOUNCEMENT', label: 'Announcement' },
   { value: 'JOB', label: 'Job' },
   { value: 'EVENT', label: 'Event' },
@@ -285,7 +286,9 @@ export default function HomeFeedPage() {
 
   useEffect(() => {
     if (!allowedComposerTypeOptions.some((option) => option.value === postForm.type)) {
-      const fallbackType = allowedComposerTypeOptions[0]?.value || 'EVENT';
+      const fallbackType = allowedComposerTypeOptions.find((option) => option.value === 'GENERAL')?.value
+        || allowedComposerTypeOptions[0]?.value
+        || 'GENERAL';
       setPostForm((prev) => ({ ...prev, type: fallbackType }));
     }
   }, [allowedComposerTypeOptions, postForm.type]);
@@ -1023,6 +1026,7 @@ export default function HomeFeedPage() {
             <span>Type</span>
             <select value={filters.type} onChange={(e) => updateFilter('type', e.target.value)}>
               <option value="">All</option>
+              <option value="GENERAL">General</option>
               <option value="ANNOUNCEMENT">Announcement</option>
               <option value="JOB">Job</option>
               <option value="EVENT">Event</option>

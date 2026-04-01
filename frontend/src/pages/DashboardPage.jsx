@@ -28,6 +28,7 @@ const PROFILE_SORT_OPTIONS = [
   { value: 'upvotes', label: 'Most upvoted' },
 ];
 const COMPOSER_TYPE_OPTIONS = [
+  { value: 'GENERAL', label: 'General' },
   { value: 'ANNOUNCEMENT', label: 'Announcement' },
   { value: 'JOB', label: 'Job' },
   { value: 'EVENT', label: 'Event' },
@@ -36,7 +37,7 @@ const COMPOSER_TYPE_OPTIONS = [
   { value: 'COLLAB', label: 'Collaboration' },
 ];
 const INITIAL_COMPOSER_FORM = {
-  type: 'EVENT',
+  type: 'GENERAL',
   title: '',
   summary: '',
   status: 'published',
@@ -253,7 +254,9 @@ export default function DashboardPage() {
     if (!allowedComposerTypeOptions.some((option) => option.value === composerForm.type)) {
       setComposerForm((prev) => ({
         ...prev,
-        type: allowedComposerTypeOptions[0]?.value || 'EVENT',
+        type: allowedComposerTypeOptions.find((option) => option.value === 'GENERAL')?.value
+          || allowedComposerTypeOptions[0]?.value
+          || 'GENERAL',
       }));
     }
   }, [allowedComposerTypeOptions, composerForm.type]);

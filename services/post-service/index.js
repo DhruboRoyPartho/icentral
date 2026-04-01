@@ -895,9 +895,15 @@ function buildPostPayload(body, { partial = false } = {}) {
         expires_at: expiresAtResult.value,
     });
 
+    if (typeof postFields.type === 'string') {
+        postFields.type = normalizeText(postFields.type)
+            .replace(/[\s-]+/g, '_')
+            .toUpperCase();
+    }
+
     if (!partial) {
-        if (!postFields.type || typeof postFields.type !== 'string') {
-            errors.push('type is required');
+        if (!postFields.type) {
+            postFields.type = 'GENERAL';
         }
         if (postFields.author_id !== undefined && String(postFields.author_id).trim() === '') {
             errors.push('authorId cannot be empty');
