@@ -74,6 +74,7 @@ export default function ChatPage() {
   const selectedConversationRef = useRef(null);
   const conversationsRef = useRef(conversations);
   const messagesViewportRef = useRef(null);
+  const latestLoadedMessageAtRef = useRef(0);
   const locationStateConversationId = location.state?.preferredConversationId
     ? String(location.state.preferredConversationId)
     : '';
@@ -196,6 +197,15 @@ export default function ChatPage() {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    const latestMessage = messages[messages.length - 1] || null;
+    const latestMessageAt = latestMessage?.createdAt
+      ? new Date(latestMessage.createdAt).getTime()
+      : 0;
+
+    latestLoadedMessageAtRef.current = Number.isNaN(latestMessageAt) ? 0 : latestMessageAt;
+  }, [messages]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
@@ -389,6 +399,23 @@ export default function ChatPage() {
       window.removeEventListener('focus', refetchWhileDisconnected);
     };
   }, [loadMessages, refreshConversations, selectedConversationId, socketConnected, token]);
+
+  useEffect(() => {
+    if (!selectedConversationId || !selectedConversation?.lastMessageAt) return;
+
+    const conversationLastMessageAt = new Date(selectedConversation.lastMessageAt).getTime();
+    if (Number.isNaN(conversationLastMessageAt)) return;
+
+    if (conversationLastMessageAt <= latestLoadedMessageAtRef.current) {
+      return;
+    }
+
+    loadMessages({
+      conversationId: selectedConversationId,
+      mode: 'replace',
+      silent: true,
+    });
+  }, [loadMessages, selectedConversation?.lastMessageAt, selectedConversationId]);
 
   useEffect(() => {
     if (!token) return undefined;
