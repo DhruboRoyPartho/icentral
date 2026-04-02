@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
+import { useChatSocket } from '../../context/useChatSocket';
 import { getUnreadJobApplicationNotificationsForUser } from '../../utils/jobPortalStorage';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
@@ -250,12 +251,16 @@ export default function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, isAuthenticated, isModerator, clearAuthSession } = useAuth();
+  const {
+    conversations,
+    loadingConversations,
+    socketConnected: chatSocketConnected,
+    isReconnecting: isChatReconnecting,
+  } = useChatSocket();
   const mobileDrawerId = useId();
   const mobileDrawerCloseButtonRef = useRef(null);
   const [globalSearchInput, setGlobalSearchInput] = useState('');
   const [isGlobalSearchSubmitting, setIsGlobalSearchSubmitting] = useState(false);
-  const [recentUnseenMessages, setRecentUnseenMessages] = useState([]);
-  const [loadingRecentUnseenMessages, setLoadingRecentUnseenMessages] = useState(true);
   const [recentNotifications, setRecentNotifications] = useState([]);
   const [loadingRecentNotifications, setLoadingRecentNotifications] = useState(true);
   const [avatarImageFailed, setAvatarImageFailed] = useState(false);
@@ -284,6 +289,16 @@ export default function AppShell() {
     })),
     [isModerator],
   );
+  const recentUnseenMessages = useMemo(() => conversations
+    .map(mapUnseenConversationItem)
+    .filter(Boolean)
+    .sort((a, b) => {
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    })
+    .slice(0, 5), [conversations]);
+  const loadingRecentUnseenMessages = isAuthenticated && loadingConversations;
 
   function closeMobileMenu() {
     setIsMobileMenuOpen(false);
@@ -366,80 +381,6 @@ export default function AppShell() {
       documentElement.style.overflow = previousDocumentOverflow;
     };
   }, [isMobileMenuOpen]);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setRecentUnseenMessages([]);
-      setLoadingRecentUnseenMessages(false);
-      return undefined;
-    }
-
-    const controller = new AbortController();
-    let isMounted = true;
-    let isFetching = false;
-
-    async function loadRecentUnseenMessages(showLoading = true) {
-      if (isFetching) return;
-      isFetching = true;
-      if (showLoading) {
-        setLoadingRecentUnseenMessages(true);
-      }
-
-      try {
-        const conversationsResult = await apiRequest('/chat/conversations', {
-          signal: controller.signal,
-        });
-        const conversations = Array.isArray(conversationsResult?.items)
-          ? conversationsResult.items
-          : (Array.isArray(conversationsResult) ? conversationsResult : []);
-
-        const sorted = conversations
-          .map(mapUnseenConversationItem)
-          .filter(Boolean)
-          .sort((a, b) => {
-            const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return bTime - aTime;
-          })
-          .slice(0, 5);
-
-        if (!isMounted) return;
-        setRecentUnseenMessages(sorted);
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          console.warn('Could not load unseen messages', error);
-          if (isMounted) {
-            setRecentUnseenMessages([]);
-          }
-        }
-      } finally {
-        if (isMounted) {
-          setLoadingRecentUnseenMessages(false);
-        }
-        isFetching = false;
-      }
-    }
-
-    loadRecentUnseenMessages(true);
-
-    const refreshInterval = window.setInterval(() => {
-      if (document.visibilityState === 'hidden') return;
-      loadRecentUnseenMessages(false);
-    }, 15000);
-
-    function handleWindowFocus() {
-      loadRecentUnseenMessages(false);
-    }
-
-    window.addEventListener('focus', handleWindowFocus);
-
-    return () => {
-      isMounted = false;
-      controller.abort();
-      window.clearInterval(refreshInterval);
-      window.removeEventListener('focus', handleWindowFocus);
-    };
-  }, [isAuthenticated, location.pathname, user?.id]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -911,7 +852,7 @@ export default function AppShell() {
                     <span className="contact-avatar contact-avatar-group" aria-hidden="true">DM</span>
                     <div>
                       <strong>No unseen messages</strong>
-                      <small>You're all caught up</small>
+                      <small>{isChatReconnecting && !chatSocketConnected ? 'Chat is reconnecting, but you are caught up for now' : "You're all caught up"}</small>
                     </div>
                   </div>
                 ) : (
