@@ -1,64 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import { useChatSocket } from '../context/useChatSocket';
 import { openUserProfile } from '../utils/profileNavigation';
+import { chatRequest, mergeMessages } from '../utils/chatClient';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 const PAGE_SIZE = 30;
-
-function normalizeConversations(items) {
-  if (!Array.isArray(items)) return [];
-  return items
-    .map((item) => ({
-      conversationId: item.conversationId,
-      otherUserId: item.otherUserId || 'Unknown user',
-      otherUserEmail: item.otherUserEmail || null,
-      otherUserFullName: item.otherUserFullName || null,
-      lastMessage: item.lastMessage || null,
-      lastMessageAt: item.lastMessageAt || null,
-      unreadCount: Number(item.unreadCount || 0),
-    }))
-    .filter((item) => item.conversationId)
-    .sort((a, b) => {
-      const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-      const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-      return bTime - aTime;
-    });
-}
-
-function upsertConversation(list, update) {
-  if (!update?.conversationId) return list;
-
-  const normalized = {
-    conversationId: update.conversationId,
-    otherUserId: update.otherUserId || 'Unknown user',
-    otherUserEmail: update.otherUserEmail || null,
-    otherUserFullName: update.otherUserFullName || null,
-    lastMessage: update.lastMessage || null,
-    lastMessageAt: update.lastMessageAt || null,
-    unreadCount: Number(update.unreadCount || 0),
-  };
-
-  const others = list.filter((item) => item.conversationId !== normalized.conversationId);
-  return normalizeConversations([normalized, ...others]);
-}
-
-function mergeMessages(baseItems, nextItems, mode = 'append') {
-  const combined = mode === 'prepend'
-    ? [...nextItems, ...baseItems]
-    : [...baseItems, ...nextItems];
-
-  const seen = new Set();
-  const deduped = [];
-
-  for (const item of combined) {
-    if (!item?.id || seen.has(item.id)) continue;
-    seen.add(item.id);
-    deduped.push(item);
-  }
-
-  return deduped.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-}
+const DISCONNECTED_REFETCH_INTERVAL_MS = 8000;
 
 function formatConversationTime(value) {
   if (!value) return '';
@@ -105,78 +53,32 @@ function getAvatarLabel(text) {
   return source.slice(0, 2).toUpperCase();
 }
 
-async function chatRequest(token, path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
-
-  const contentType = response.headers.get('content-type') || '';
-  const data = contentType.includes('application/json')
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    const message = typeof data === 'string'
-      ? data
-      : data?.error || data?.message || 'Request failed';
-    throw new Error(message);
-  }
-
-  return data;
-}
-
-async function loadSocketIoFactory(baseUrl) {
-  if (typeof window === 'undefined') {
-    throw new Error('Socket client can only be used in a browser');
-  }
-
-  if (typeof window.io === 'function') {
-    return window.io;
-  }
-
-  await new Promise((resolve, reject) => {
-    const existing = document.querySelector('script[data-socket-io-client="true"]');
-    if (existing) {
-      existing.addEventListener('load', resolve, { once: true });
-      existing.addEventListener('error', () => reject(new Error('Failed to load socket client')), { once: true });
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = `${baseUrl}/chat/socket.io/socket.io.js`;
-    script.async = true;
-    script.dataset.socketIoClient = 'true';
-    script.onload = resolve;
-    script.onerror = () => reject(new Error('Failed to load socket client'));
-    document.body.appendChild(script);
-  });
-
-  if (typeof window.io !== 'function') {
-    throw new Error('Socket client did not initialize');
-  }
-
-  return window.io;
-}
-
 export default function ChatPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { token, user, isAuthenticated } = useAuth();
-
-  const socketRef = useRef(null);
+  const {
+    conversations,
+    loadingConversations,
+    conversationsError,
+    socketConnected,
+    socketStatus,
+    isReconnecting,
+    lastSocketError,
+    refreshConversations,
+    applyConversationUpdate,
+    joinConversation,
+    leaveConversation,
+    subscribeToMessages,
+  } = useChatSocket();
   const selectedConversationRef = useRef(null);
+  const conversationsRef = useRef(conversations);
   const messagesViewportRef = useRef(null);
+  const locationStateConversationId = location.state?.preferredConversationId
+    ? String(location.state.preferredConversationId)
+    : '';
 
-  const [conversations, setConversations] = useState([]);
-  const [loadingConversations, setLoadingConversations] = useState(true);
-  const [conversationsError, setConversationsError] = useState('');
-
-  const [selectedConversationId, setSelectedConversationId] = useState('');
+  const [selectedConversationId, setSelectedConversationId] = useState(locationStateConversationId);
   const [messages, setMessages] = useState([]);
   const [messagesError, setMessagesError] = useState('');
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -196,8 +98,6 @@ export default function ChatPage() {
 
   const [startingConversation, setStartingConversation] = useState(false);
   const [startConversationError, setStartConversationError] = useState('');
-
-  const [socketConnected, setSocketConnected] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
       return false;
@@ -261,46 +161,41 @@ export default function ChatPage() {
     });
   }, []);
 
-  const markConversationRead = useCallback(async (conversationId) => {
+  const markConversationRead = useCallback(async (
+    conversationId,
+    {
+      conversationSnapshot = null,
+      force = false,
+    } = {},
+  ) => {
     if (!conversationId || !token) return;
+
+    const snapshot = conversationSnapshot
+      || conversationsRef.current.find((item) => item.conversationId === conversationId)
+      || null;
+
+    if (!force && Number(snapshot?.unreadCount || 0) <= 0) {
+      return;
+    }
 
     try {
       await chatRequest(token, `/chat/conversations/${conversationId}/read`, {
         method: 'POST',
       });
-    } catch (error) {
-      console.warn('Failed to mark conversation as read', error);
-    }
-  }, [token]);
-
-  const loadConversations = useCallback(async (preferredConversationId = null) => {
-    if (!token) return;
-
-    setLoadingConversations(true);
-    setConversationsError('');
-
-    try {
-      const result = await chatRequest(token, '/chat/conversations');
-      const items = normalizeConversations(result?.items || result);
-      setConversations(items);
-
-      if (preferredConversationId) {
-        setSelectedConversationId(preferredConversationId);
-      } else if (!selectedConversationRef.current) {
-        if (!isMobileViewport && items.length > 0) {
-          setSelectedConversationId(items[0].conversationId);
-        } else if (items.length === 0) {
-          setSelectedConversationId('');
-        }
-      } else if (selectedConversationRef.current && !items.some((item) => item.conversationId === selectedConversationRef.current)) {
-        setSelectedConversationId(isMobileViewport ? '' : (items[0]?.conversationId || ''));
+      if (snapshot) {
+        applyConversationUpdate({
+          ...snapshot,
+          unreadCount: 0,
+        });
       }
     } catch (error) {
-      setConversationsError(error.message || 'Could not load conversations');
-    } finally {
-      setLoadingConversations(false);
+      console.warn('[chat] failed to mark conversation read', error);
     }
-  }, [isMobileViewport, token]);
+  }, [applyConversationUpdate, token]);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
@@ -323,12 +218,38 @@ export default function ChatPage() {
     setSelectedConversationId(conversations[0].conversationId);
   }, [conversations, isMobileViewport, selectedConversationId]);
 
-  const loadMessages = useCallback(async ({ conversationId, cursor = null, mode = 'replace' }) => {
+  useEffect(() => {
+    if (!locationStateConversationId) return;
+    setSelectedConversationId(locationStateConversationId);
+  }, [locationStateConversationId]);
+
+  useEffect(() => {
+    if (!selectedConversationRef.current) {
+      if (!isMobileViewport && conversations.length > 0) {
+        setSelectedConversationId((currentValue) => currentValue || conversations[0].conversationId);
+      } else if (conversations.length === 0) {
+        setSelectedConversationId('');
+      }
+      return;
+    }
+
+    if (!conversations.some((item) => item.conversationId === selectedConversationRef.current)) {
+      setSelectedConversationId(isMobileViewport ? '' : (conversations[0]?.conversationId || ''));
+    }
+  }, [conversations, isMobileViewport]);
+
+  const loadMessages = useCallback(async ({
+    conversationId,
+    cursor = null,
+    mode = 'replace',
+    silent = false,
+    scrollOnSuccess = false,
+  }) => {
     if (!token || !conversationId) return;
 
     if (mode === 'prepend') {
       setLoadingOlder(true);
-    } else {
+    } else if (!silent) {
       setLoadingMessages(true);
       setMessagesError('');
     }
@@ -351,14 +272,27 @@ export default function ChatPage() {
         setMessages((prev) => mergeMessages(prev, incomingItems, 'prepend'));
       } else {
         setMessages(incomingItems);
-        await markConversationRead(conversationId);
-        scrollMessagesToBottom();
+        const conversationSnapshot = conversationsRef.current.find((item) => item.conversationId === conversationId) || null;
+        await markConversationRead(conversationId, { conversationSnapshot });
+
+        if (scrollOnSuccess) {
+          scrollMessagesToBottom();
+        }
       }
     } catch (error) {
-      setMessagesError(error.message || 'Could not load messages');
+      if (error.name === 'AbortError') return;
+
+      if (!silent) {
+        setMessagesError(error.message || 'Could not load messages');
+      } else {
+        console.warn(`[chat] failed to refetch messages for ${conversationId}`, error);
+      }
     } finally {
-      setLoadingMessages(false);
-      setLoadingOlder(false);
+      if (mode === 'prepend') {
+        setLoadingOlder(false);
+      } else if (!silent) {
+        setLoadingMessages(false);
+      }
     }
   }, [markConversationRead, scrollMessagesToBottom, token]);
 
@@ -367,13 +301,7 @@ export default function ChatPage() {
       navigate('/login');
       return;
     }
-
-    const preferredConversationId = location.state?.preferredConversationId
-      ? String(location.state.preferredConversationId)
-      : null;
-
-    loadConversations(preferredConversationId);
-  }, [isAuthenticated, loadConversations, location.state, navigate, token]);
+  }, [isAuthenticated, navigate, token]);
 
   useEffect(() => {
     selectedConversationRef.current = selectedConversationId;
@@ -386,84 +314,81 @@ export default function ChatPage() {
       return;
     }
 
-    loadMessages({ conversationId: selectedConversationId, mode: 'replace' });
+    loadMessages({
+      conversationId: selectedConversationId,
+      mode: 'replace',
+      scrollOnSuccess: true,
+    });
   }, [loadMessages, selectedConversationId]);
 
   useEffect(() => {
-    if (!token || !isAuthenticated) return undefined;
-    let isCancelled = false;
-    let activeSocket = null;
+    if (!isAuthenticated) return undefined;
 
-    async function connectSocket() {
-      try {
-        const ioFactory = await loadSocketIoFactory(API_BASE_URL);
-        if (isCancelled) return;
+    const unsubscribe = subscribeToMessages(async (message) => {
+      if (!message?.conversationId || message.conversationId !== selectedConversationRef.current) return;
 
-        const socket = ioFactory(API_BASE_URL, {
-          path: '/chat/socket.io',
-          transports: ['websocket', 'polling'],
-          auth: { token },
+      setMessages((prev) => mergeMessages(prev, [message], 'append'));
+
+      if (String(message.senderId) !== currentUserId) {
+        const conversationSnapshot = conversationsRef.current.find((item) => item.conversationId === message.conversationId) || null;
+        await markConversationRead(message.conversationId, {
+          conversationSnapshot,
+          force: true,
         });
-
-        activeSocket = socket;
-        socketRef.current = socket;
-
-        socket.on('connect', () => {
-          setSocketConnected(true);
-          if (selectedConversationRef.current) {
-            socket.emit('conversation:join', { conversationId: selectedConversationRef.current });
-          }
-        });
-
-        socket.on('disconnect', () => {
-          setSocketConnected(false);
-        });
-
-        socket.on('conversation:updated', (payload) => {
-          if (!payload?.conversationId) return;
-          setConversations((prev) => upsertConversation(prev, payload));
-        });
-
-        socket.on('message:new', async (message) => {
-          if (!message?.conversationId) return;
-          if (message.conversationId !== selectedConversationRef.current) return;
-
-          setMessages((prev) => mergeMessages(prev, [message], 'append'));
-
-          if (String(message.senderId) !== currentUserId) {
-            await markConversationRead(message.conversationId);
-          }
-
-          scrollMessagesToBottom();
-        });
-
-        socket.on('connect_error', (error) => {
-          console.warn('Socket connection failed', error?.message || error);
-        });
-      } catch (error) {
-        if (!isCancelled) {
-          console.warn('Could not initialize socket client', error?.message || error);
-        }
       }
-    }
 
-    connectSocket();
+      scrollMessagesToBottom();
+    });
 
-    return () => {
-      isCancelled = true;
-      if (activeSocket) {
-        activeSocket.disconnect();
-      }
-      socketRef.current = null;
-      setSocketConnected(false);
-    };
-  }, [currentUserId, isAuthenticated, markConversationRead, scrollMessagesToBottom, token]);
+    return unsubscribe;
+  }, [currentUserId, isAuthenticated, markConversationRead, scrollMessagesToBottom, subscribeToMessages]);
 
   useEffect(() => {
-    if (!selectedConversationId || !socketRef.current || !socketConnected) return;
+    if (!selectedConversationId) return undefined;
 
-    socketRef.current.emit('conversation:join', { conversationId: selectedConversationId });
-  }, [selectedConversationId, socketConnected]);
+    let isActive = true;
+    joinConversation(selectedConversationId);
+
+    return () => {
+      if (!isActive) return;
+      isActive = false;
+      leaveConversation(selectedConversationId);
+    };
+  }, [joinConversation, leaveConversation, selectedConversationId]);
+
+  useEffect(() => {
+    if (!selectedConversationId || !socketConnected) return;
+
+    loadMessages({
+      conversationId: selectedConversationId,
+      mode: 'replace',
+      silent: true,
+    });
+  }, [loadMessages, selectedConversationId, socketConnected]);
+
+  useEffect(() => {
+    if (!token || !selectedConversationId || socketConnected) return undefined;
+
+    const refetchWhileDisconnected = () => {
+      if (document.visibilityState === 'hidden') return;
+
+      refreshConversations({ showLoading: false });
+      loadMessages({
+        conversationId: selectedConversationId,
+        mode: 'replace',
+        silent: true,
+      });
+    };
+
+    refetchWhileDisconnected();
+    const intervalId = window.setInterval(refetchWhileDisconnected, DISCONNECTED_REFETCH_INTERVAL_MS);
+    window.addEventListener('focus', refetchWhileDisconnected);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refetchWhileDisconnected);
+    };
+  }, [loadMessages, refreshConversations, selectedConversationId, socketConnected, token]);
 
   useEffect(() => {
     if (!token) return undefined;
@@ -530,7 +455,7 @@ export default function ChatPage() {
       setEmailQuery('');
       setUserSearchResults([]);
       setSelectedRecipient(null);
-      await loadConversations(conversationId);
+      await refreshConversations({ showLoading: false });
       setSelectedConversationId(conversationId);
     } catch (error) {
       setStartConversationError(error.message || 'Could not start conversation');
@@ -558,7 +483,7 @@ export default function ChatPage() {
 
       setDraftBody('');
       setMessages((prev) => mergeMessages(prev, [createdMessage], 'append'));
-      setConversations((prev) => upsertConversation(prev, {
+      applyConversationUpdate({
         conversationId: selectedConversationId,
         otherUserId: selectedConversation?.otherUserId,
         otherUserEmail: selectedConversation?.otherUserEmail,
@@ -566,7 +491,7 @@ export default function ChatPage() {
         lastMessage: createdMessage.body,
         lastMessageAt: createdMessage.createdAt,
         unreadCount: 0,
-      }));
+      });
       scrollMessagesToBottom();
     } catch (error) {
       setMessagesError(error.message || 'Could not send message');
@@ -749,7 +674,13 @@ export default function ChatPage() {
                         selectedConversationName
                       )}
                     </h3>
-                    <small>{socketConnected ? 'Active now' : 'Reconnecting...'}</small>
+                    <small>
+                      {socketConnected ? 'Active now' : (
+                        socketStatus === 'connecting'
+                          ? 'Connecting...'
+                          : 'Reconnecting...'
+                      )}
+                    </small>
                   </div>
                 </div>
                 <div className="chat-thread-actions">
@@ -842,6 +773,13 @@ export default function ChatPage() {
           )}
 
           {messagesError ? <p className="chat-inline-error chat-thread-error">{messagesError}</p> : null}
+          {!socketConnected && selectedConversation ? (
+            <p className="chat-empty-text chat-thread-error">
+              {isReconnecting
+                ? `Live updates are reconnecting${lastSocketError ? `: ${lastSocketError}` : ''}.`
+                : 'Live updates are temporarily unavailable.'}
+            </p>
+          ) : null}
         </section>
       </div>
     </div>

@@ -5777,6 +5777,7 @@
   grid-template-rows: auto auto auto auto minmax(0, 1fr);
   gap: 12px;
   padding: 14px 12px;
+  overflow-x: hidden;
 }
 
 .chat-sidebar-top {
@@ -5958,6 +5959,7 @@
 .chat-conversation-list {
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   display: grid;
   gap: 6px;
   padding-right: 2px;
@@ -6040,6 +6042,8 @@
 
 .chat-conversation-foot p {
   margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 0.82rem;
   color: #9ca5bc;
   overflow: hidden;
